@@ -1,118 +1,149 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+JAKA 机械臂低延迟遥操作节点 (最终修正版)
+特性：
+1. QoS 深度设为 1 (丢弃旧数据，只发最新指令)
+2. 虚拟位置积分控制 (解决弹簧回弹风险)
+3. 动态速度调节 + 手腕极速模式
+"""
+
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Joy
-from geometry_msgs.msg import Twist
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import Joy, JointState
 from std_msgs.msg import Float64MultiArray
+import math
 
-# ===================== 配置项：按需修改 =====================
-CONTROL_MODE = "ARM"  # "ARM"=机械臂(关节角度)，"BASE"=底盘/无人机(Twist速度)
-ARM_JOINT_NUM = 6     # JAKA机械臂是6轴
-LINEAR_SCALE_DEF = 0.1
-ANGULAR_SCALE_DEF = 0.5
-DEADZONE_DEF = 0.1
-# ======================================================================
+# ===================== 🎮 硬件映射 (基于您的设备) =====================
+AXIS_LR       = 0   # 左右 -> J1 / J4
+AXIS_FB       = 1   # 前后 -> J2 / J5
+AXIS_TWIST    = 2   # 旋转 -> J3 / J6
+AXIS_THROTTLE = 3   # 节流阀
 
-class JoystickTeleop(Node):
+BTN_SHIFT     = 0   # 扳机键 (手腕模式切换)
+BTN_DEADMAN   = 1   # 拇指键 (必须按住才能动)
+
+# ===================== ⚙️ 核心参数调优 =====================
+ARM_JOINT_NUM = 6
+# 基础步长：调大此值可提高整体响应速度 (建议 0.03 - 0.08)
+BASE_SPEED = 0.04 
+# 手腕加速倍率：手腕关节转动惯量小，给 3.0 倍速才跟手
+WRIST_SPEED_BOOST = 3.0 
+# 软件限位：放宽到 ±360度 (6.28 rad) 以防止撞虚拟墙
+LIMIT_RAD = 6.28  
+DEADZONE = 0.05
+# ===========================================================
+
+class JakaJoystickTeleop(Node):
     def __init__(self):
-        super().__init__('joystick_teleop')
-        
-        # 声明参数 + 兜底默认值
-        self.linear_scale = self.declare_parameter('linear_scale', LINEAR_SCALE_DEF).value
-        self.angular_scale = self.declare_parameter('angular_scale', ANGULAR_SCALE_DEF).value
-        self.deadzone = self.declare_parameter('deadzone', DEADZONE_DEF).value
+        super().__init__('jaka_joystick_teleop')
 
-        # 根据控制模式创建发布者
-        if CONTROL_MODE == "ARM":
-            self.cmd_pub = self.create_publisher(Float64MultiArray, '/jaka_target_joints', 10)
-            self.get_logger().info(f'✅ 机械臂模式启动 | 发布关节角度到: /jaka_target_joints')
-        else:
-            self.cmd_pub = self.create_publisher(Twist, '/jaka_teleop/cmd_vel', 10)
-            self.get_logger().info(f'✅ 底盘/无人机模式启动 | 发布速度指令到: /jaka_teleop/cmd_vel')
+        # --- 1. 低延迟 QoS 配置 ---
+        # 关键：只保留最后 1 条数据 (KeepLast=1)，旧数据直接丢弃
+        # 这能防止网络卡顿后，机械臂疯狂执行积压的旧指令
+        low_latency_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
 
-        # 订阅摇杆数据
+        # --- 2. 内部状态 ---
+        self.virtual_joints = None  # 积分控制的核心：记录"理论目标位置"
+
+        # --- 3. 通信接口 ---
+        # 订阅真实状态 (用于初始对齐)
+        self.joint_sub = self.create_subscription(
+            JointState, 
+            '/joint_states', # 如有前缀请修改，例如 '/jaka_zu7/joint_states'
+            self.joint_state_callback, 
+            low_latency_qos
+        )
+
+        # 订阅摇杆
         self.joy_sub = self.create_subscription(Joy, '/joy', self.joy_callback, 10)
-        
-        # 防抖：缓存上一次按键状态 - 初始化为空列表
-        self.last_buttons = []
-        self.get_logger().info(f'飞行摇杆遥操作节点已启动 | 死区:{self.deadzone} | 线速度缩放:{self.linear_scale}')
 
-    # 安全访问摇杆轴，索引越界返回0.0，永不崩溃
-    def safe_get_axis(self, axes_list, index, default=0.0):
-        return axes_list[index] if index < len(axes_list) else default
+        # 发布指令
+        self.cmd_pub = self.create_publisher(
+            Float64MultiArray, 
+            '/jaka_target_joints', 
+            low_latency_qos # 应用低延迟策略
+        )
 
-    # 安全访问按键，索引越界返回0，永不崩溃
-    def safe_get_button(self, btn_list, index, default=0):
-        return btn_list[index] if index < len(btn_list) else default
+        self.get_logger().info('✅ Python端就绪：已启用极速模式 (QoS Depth=1)')
 
-    # 死区过滤逻辑
-    def apply_deadzone(self, value):
-        return value if abs(value) > self.deadzone else 0.0
+    def safe_get(self, lst, idx, default=0.0):
+        return lst[idx] if idx < len(lst) else default
+
+    def clamp(self, val):
+        return max(-LIMIT_RAD, min(val, LIMIT_RAD))
+
+    def joint_state_callback(self, msg):
+        # 仅在启动时进行一次对齐，将虚拟位置同步为真实位置
+        # 之后就不再受真实位置延迟的影响，完全由摇杆控制虚拟积分
+        if self.virtual_joints is None and len(msg.position) >= ARM_JOINT_NUM:
+            self.virtual_joints = list(msg.position)[:ARM_JOINT_NUM]
+            self.get_logger().info(f'校准初始位置完成: {[round(x,2) for x in self.virtual_joints]}')
 
     def joy_callback(self, msg):
         try:
-            # ========== 核心修复：将array.array 转为Python原生list ==========
-            joy_axes = list(msg.axes)
-            joy_buttons = list(msg.buttons)
+            # [安全锁] 没按拇指键，直接跳过
+            if not self.safe_get(msg.buttons, BTN_DEADMAN):
+                return 
             
-            # 读取摇杆数据 + 安全防护 + 死区过滤
-            filtered_axes = [self.apply_deadzone(ax) for ax in joy_axes]
-            # 按键防抖初始化：长度不一致则重置
-            self.last_buttons = self.last_buttons if len(self.last_buttons) == len(joy_buttons) else [0]*len(joy_buttons)
+            # [未校准] 等待接收第一帧 joint_states
+            if self.virtual_joints is None:
+                self.get_logger().warn('等待机械臂状态数据...', throttle_duration_sec=2)
+                return
 
-            # 分模式处理指令
-            if CONTROL_MODE == "ARM":
-                # 机械臂模式：摇杆轴 → 6关节弧度值 (适配JAKA机械臂)
-                joint_msg = Float64MultiArray()
-                joint_angles = [0.0]*ARM_JOINT_NUM
-                # 摇杆轴映射到6关节 (可根据手感调整轴索引)
-                joint_angles[0] = self.safe_get_axis(filtered_axes, 1) * 1.57 + 1.57  # 关节1:0~3.14rad
-                joint_angles[1] = self.safe_get_axis(filtered_axes, 0) * 1.57 + 1.57  # 关节2:0~3.14rad
-                joint_angles[2] = self.safe_get_axis(filtered_axes, 2) * -1.57 - 1.57 # 关节3:-3.14~0rad
-                joint_angles[3] = self.safe_get_axis(filtered_axes, 3) * 1.57 + 1.57  # 关节4:0~3.14rad
-                joint_angles[4] = self.safe_get_axis(filtered_axes, 4) * 1.57 + 1.57  # 关节5:0~3.14rad
-                joint_angles[5] = self.safe_get_axis(filtered_axes, 5) * 1.57 + 1.57  # 关节6:0~3.14rad
-                joint_msg.data = joint_angles
-                self.cmd_pub.publish(joint_msg)
-                self.get_logger().info(f'📢 发布关节角度: {[round(x,3) for x in joint_angles]}')
-            
+            # --- 1. 计算速度 (节流阀) ---
+            # 映射范围：Axis3 [-1.0 ~ 1.0] -> 倍率 [0.5 ~ 2.5]
+            raw_throttle = self.safe_get(msg.axes, AXIS_THROTTLE)
+            speed_ratio = (raw_throttle * -1 + 1.0) / 2.0 
+            current_speed = BASE_SPEED * (0.5 + speed_ratio * 2.0)
+
+            # --- 2. 读取输入 ---
+            raw_x = self.safe_get(msg.axes, AXIS_LR)
+            raw_y = self.safe_get(msg.axes, AXIS_FB)
+            raw_twist = self.safe_get(msg.axes, AXIS_TWIST)
+
+            val_x = 0.0 if abs(raw_x) < DEADZONE else raw_x 
+            val_y = 0.0 if abs(raw_y) < DEADZONE else raw_y 
+            val_twist = 0.0 if abs(raw_twist) < DEADZONE else raw_twist 
+
+            # --- 3. 积分控制逻辑 ---
+            is_wrist_mode = self.safe_get(msg.buttons, BTN_SHIFT)
+
+            if not is_wrist_mode:
+                # === 身体模式 (J1-J3) ===
+                # J1(左右), J2(前后-反向), J3(旋转-反向+加速)
+                self.virtual_joints[0] = self.clamp(self.virtual_joints[0] + val_x * current_speed)
+                self.virtual_joints[1] = self.clamp(self.virtual_joints[1] - val_y * current_speed)
+                self.virtual_joints[2] = self.clamp(self.virtual_joints[2] - val_twist * current_speed * 1.5)
             else:
-                # 底盘模式：保留原逻辑，修复所有BUG
-                cmd_vel = Twist()
-                # 左摇杆控制平移
-                cmd_vel.linear.x = self.safe_get_axis(filtered_axes, 1) * self.linear_scale
-                cmd_vel.linear.y = self.safe_get_axis(filtered_axes, 0) * self.linear_scale
-                # 肩部按键控制Z轴
-                btn4 = self.safe_get_button(joy_buttons, 4)
-                btn5 = self.safe_get_button(joy_buttons, 5)
-                cmd_vel.linear.z = (btn4 - btn5) * self.linear_scale
+                # === 手腕模式 (J4-J6) ===
+                # 应用加速倍率
+                bs = current_speed * WRIST_SPEED_BOOST
+                self.virtual_joints[3] = self.clamp(self.virtual_joints[3] + val_x * bs)
+                self.virtual_joints[4] = self.clamp(self.virtual_joints[4] - val_y * bs)
+                self.virtual_joints[5] = self.clamp(self.virtual_joints[5] + val_twist * bs)
 
-                # 右摇杆控制姿态角速度
-                cmd_vel.angular.x = self.safe_get_axis(filtered_axes, 4) * self.angular_scale
-                cmd_vel.angular.y = self.safe_get_axis(filtered_axes, 3) * self.angular_scale
-                # 按钮控制偏航角速度
-                btn0 = self.safe_get_button(joy_buttons, 0)
-                btn1 = self.safe_get_button(joy_buttons, 1)
-                cmd_vel.angular.z = (btn0 - btn1) * self.angular_scale
-
-                self.cmd_pub.publish(cmd_vel)
-                self.get_logger().info(f'📢 发布速度指令: linear({round(cmd_vel.linear.x,2)},{round(cmd_vel.linear.y,2)},{round(cmd_vel.linear.z,2)}) | angular({round(cmd_vel.angular.x,2)},{round(cmd_vel.angular.y,2)},{round(cmd_vel.angular.z,2)})')
-
-            # ✅ 修复核心：更新按键状态，用转换后的list赋值即可，无需copy()
-            self.last_buttons = joy_buttons
+            # --- 4. 发布极低延迟指令 ---
+            msg_out = Float64MultiArray()
+            msg_out.data = self.virtual_joints
+            self.cmd_pub.publish(msg_out)
 
         except Exception as e:
-            self.get_logger().error(f'回调函数异常: {str(e)}', throttle_duration_sec=1)
+            self.get_logger().error(f'Error: {e}')
 
 def main():
-    rclpy.init(args=None)
-    node = JoystickTeleop()
+    rclpy.init()
+    node = JakaJoystickTeleop()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info('收到退出信号，正在关闭节点...')
-    except Exception as e:
-        node.get_logger().error(f'节点运行异常: {str(e)}')
+        pass
     finally:
         node.destroy_node()
         rclpy.shutdown()

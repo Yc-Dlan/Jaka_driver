@@ -1,200 +1,98 @@
 #include "rclcpp/rclcpp.hpp"
-
 #include "moveit/move_group_interface/move_group_interface.h"
 #include "moveit/planning_scene_interface/planning_scene_interface.h"
-#include "moveit_msgs/msg/display_robot_state.hpp"  
-#include "moveit_msgs/msg/display_trajectory.hpp"   
-#include "moveit_msgs/msg/attached_collision_object.hpp"  
-#include "moveit_msgs/msg/collision_object.hpp"  
-#include "moveit_visual_tools/moveit_visual_tools.h"
-
-#include <moveit_msgs/msg/joint_limits.hpp>
-#include <moveit/robot_state/robot_state.h>
-
-#include "std_srvs/srv/empty.hpp"
-// ====== 新增1：添加摇杆订阅需要的头文件 ======
 #include "std_msgs/msg/float64_multi_array.hpp"
 #include <mutex>
 #include <atomic>
-// ==============================================
+#include <thread>
+#include <vector>
 
 using namespace std;
 
-// ====== 新增2：全局变量-摇杆指令相关（线程安全） ======
-std::vector<double> target_joint_values(6, 0.0);  // 存储摇杆发布的6个关节值
-std::mutex joint_mutex;                           // 互斥锁-保证线程安全
-std::atomic<bool> has_new_target{false};          // 原子变量-标记是否有新的摇杆指令
-// JAKA Zu3 官方关节限位（绝对安全，和你的Python映射匹配）
-const std::vector<double> JOINT_MIN = {0.0,  0.0,  -3.14, 0.0,  0.0,  0.0};
-const std::vector<double> JOINT_MAX = {3.14, 3.14,  0.0,  3.14, 3.14, 3.14};
-// ====================================================
+// ====== 全局变量 ======
+std::vector<double> target_joint_values(6, 0.0);
+std::mutex joint_mutex;
+std::atomic<bool> has_new_target{false};
 
-void sigintHandler(int /*sig*/) {
-    rclcpp::shutdown();
-}
+// ✅ 核心修正 1：彻底放开限位至 ±360度 (±6.28 rad)
+// 防止出现"往一边能动，往另一边动不了"的情况
+const std::vector<double> JOINT_MIN = {-6.28, -6.28, -6.28, -6.28, -6.28, -6.28};
+const std::vector<double> JOINT_MAX = { 6.28,  6.28,  6.28,  6.28,  6.28,  6.28};
 
-// ====== 新增3：摇杆指令话题回调函数（核心！接收Python发布的关节值） ======
+// 话题回调：接收 Python 发来的目标点
 void jointTargetCallback(const std_msgs::msg::Float64MultiArray::SharedPtr joint_msg)
 {
+    if(joint_msg->data.size() != 6) return;
+
     std::lock_guard<std::mutex> lock(joint_mutex);
-    // 数据校验：必须是6个关节值
-    if(joint_msg->data.size() != 6)
-    {
-        RCLCPP_WARN(rclcpp::get_logger("jaka_planner"), "摇杆指令错误：关节值数量=%zu，必须为6个！", joint_msg->data.size());
-        return;
-    }
-    // 关节限位保护：将摇杆指令限制在官方安全范围内
     for(int i=0; i<6; i++)
     {
+        // 简单的限位保护
         target_joint_values[i] = std::max(JOINT_MIN[i], std::min(JOINT_MAX[i], joint_msg->data[i]));
     }
-    // 标记有新指令
     has_new_target = true;
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "✅ 收到摇杆关节指令: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
-                target_joint_values[0], target_joint_values[1], target_joint_values[2],
-                target_joint_values[3], target_joint_values[4], target_joint_values[5]);
 }
-// ==========================================================================
 
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
     rclcpp::NodeOptions options;
     options.parameter_overrides({rclcpp::Parameter("use_sim_time", true)});
-    signal(SIGINT, sigintHandler);
     auto node = rclcpp::Node::make_shared("jaka_planner", options);
 
-    string model = node->declare_parameter<string>("model", "zu3");
-    string PLANNING_GROUP = "jaka_" + model;
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "Using PLANNING_GROUP: %s", PLANNING_GROUP.c_str());
+    // ✅ 核心修正 2：使用极低延迟的 QoS (Depth=1)
+    // 只有最新的指令才会被接收，旧的直接丢掉，杜绝堆积延迟
+    rclcpp::QoS qos_profile(1); 
+    qos_profile.reliability(rclcpp::ReliabilityPolicy::BestEffort);
 
+    auto joint_sub = node->create_subscription<std_msgs::msg::Float64MultiArray>(
+        "/jaka_target_joints", 
+        qos_profile, 
+        jointTargetCallback
+    );
+
+    // MoveIt 初始化 (请确认组名是否为 "jaka_zu7" 或其他)
+    // 如果报错 "Group not found"，请修改这里
+    std::string PLANNING_GROUP = "jaka_zu20"; 
+    moveit::planning_interface::MoveGroupInterface move_group(node, PLANNING_GROUP);
+
+    // ✅ 核心修正 3：拉满速度和加速度
+    // 遥操作要求响应快，不需要过于平滑
+    move_group.setMaxVelocityScalingFactor(1.0);     
+    move_group.setMaxAccelerationScalingFactor(1.0); 
+
+    // 开启多线程处理 (保证回调函数能随时打断主循环)
     rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node);
-    thread spinner_thread([&executor]() {
-        executor.spin();
-    });
+    std::thread spinner_thread([&executor]() { executor.spin(); });
+
+    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "🔥 极速异步控制模式已启动 (AsyncMove)");
+
+    // 提高控制频率到 50Hz (每20ms检查一次)
+    rclcpp::Rate rate(50); 
     
-    moveit::planning_interface::MoveGroupInterface move_group(node, PLANNING_GROUP);
-    moveit::planning_interface::PlanningSceneInterface planning_scene_interface;
-    const moveit::core::JointModelGroup* joint_model_group = move_group.getCurrentState()->getJointModelGroup(PLANNING_GROUP);
-
-    rclcpp::Duration du_1(5, 0);
-
-    // ====== 新增4：创建话题订阅器，订阅Python摇杆节点的指令 ======
-    auto joint_sub = node->create_subscription<std_msgs::msg::Float64MultiArray>(
-        "/jaka_target_joints",  // 话题名：和你的Python摇杆代码完全一致，无需修改
-        10,                     // 消息队列大小
-        jointTargetCallback     // 回调函数：收到指令后执行
-    );
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "✅ 已订阅摇杆话题: /jaka_target_joints");
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "✅ 摇杆控制模式已开启，拨动摇杆即可控制机械臂！");
-    // =============================================================
-
-    moveit::planning_interface::MoveGroupInterface::Plan my_plan;
-    bool success =(move_group.plan(my_plan)== moveit::core::MoveItErrorCode::SUCCESS);
-
-    // ====== 注释掉官方的「固定轨迹测试代码」（保留代码，方便你后续测试） ======
-    // 原官方固定轨迹代码全部保留，用注释包裹，不执行，你想恢复的话删掉注释即可
-    /*
-    vector<double> joint_group_positions;
-    moveit::core::RobotStatePtr current_state = move_group.getCurrentState();
-    current_state->copyJointGroupPositions(joint_model_group, joint_group_positions);
-
-    for (int i = 0; i < 2; i++)
-    {
-        move_group.setStartStateToCurrentState();
-        joint_group_positions[0] = 0.0;  
-        joint_group_positions[1] = 1.57;  
-        joint_group_positions[2] = -1.57;  
-        joint_group_positions[3] = 1.57;  
-        joint_group_positions[4] = 1.57;  
-        joint_group_positions[5] = 0.0;  
-        move_group.setJointValueTarget(joint_group_positions);
-        success = (move_group.plan(my_plan) == moveit::core::MoveItErrorCode::SUCCESS);
-        RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "Visualizing Plan 1 success: %s", success ? "True" : "False");
-        move_group.move();
-        rclcpp::sleep_for(chrono::milliseconds(500));
-
-        move_group.setStartStateToCurrentState();
-        joint_group_positions[0] = 1.57;  
-        joint_group_positions[1] = 1.57;  
-        joint_group_positions[2] = -1.57;  
-        joint_group_positions[3] = 1.57;  
-        joint_group_positions[4] = 1.57;  
-        joint_group_positions[5] = 0.0;  
-        move_group.setJointValueTarget(joint_group_positions);
-        success = (move_group.plan(my_plan) == moveit::core::MoveItErrorCode::SUCCESS);
-        RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "Visualizing Plan 2 success: %s", success ? "True" : "False");
-        move_group.move();
-        rclcpp::sleep_for(chrono::milliseconds(500));
-
-        joint_group_positions[0] = 1.57;  
-        joint_group_positions[1] = 1.57;  
-        joint_group_positions[2] = 1.57;  
-        joint_group_positions[3] = 1.57;  
-        joint_group_positions[4] = 1.57;  
-        joint_group_positions[5] = 0.0;  
-        move_group.setJointValueTarget(joint_group_positions);
-        success = (move_group.plan(my_plan) == moveit::core::MoveItErrorCode::SUCCESS);
-        RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "Visualizing Plan 3 success: %s", success ? "True" : "False");
-        move_group.move();
-        rclcpp::sleep_for(chrono::milliseconds(500));
-
-    }
-
-    move_group.setStartStateToCurrentState();
-    joint_group_positions[0] = 0.0;  
-    joint_group_positions[1] = 1.57;  
-    joint_group_positions[2] = -1.57;  
-    joint_group_positions[3] = 1.57;  
-    joint_group_positions[4] = 1.57;  
-    joint_group_positions[5] = 0.0;  
-    move_group.setJointValueTarget(joint_group_positions);
-    success = (move_group.plan(my_plan) == moveit::core::MoveItErrorCode::SUCCESS);
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "Visualizing Plan 4 success: %s", success ? "True" : "False");
-    move_group.move();
-    rclcpp::sleep_for(chrono::seconds(1));
-    */
-
-    // ====== 新增5：实时摇杆控制主循环（核心！替代原固定轨迹） ======
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "==================================");
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "进入实时摇杆控制模式，等待指令...");
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "关节限位：JOINT_MIN[0~-3.14], JOINT_MAX[3.14~0]");
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "==================================");
-    rclcpp::Rate rate(20); // 20Hz循环频率，流畅无卡顿
-    vector<double> current_joints;
     while(rclcpp::ok())
     {
-        // 如果收到摇杆的新指令，执行规划+运动
         if(has_new_target)
         {
-            std::lock_guard<std::mutex> lock(joint_mutex);
-            // 设置起始位姿为当前位姿
-            move_group.setStartStateToCurrentState();
-            // 设置摇杆传来的目标关节值
-            move_group.setJointValueTarget(target_joint_values);
-            // 规划运动轨迹
-            success = (move_group.plan(my_plan) == moveit::core::MoveItErrorCode::SUCCESS);
-            if(success)
+            std::vector<double> target_copy;
             {
-                RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "✅ 规划成功，执行运动！");
-                move_group.move(); // 执行运动
+                std::lock_guard<std::mutex> lock(joint_mutex);
+                target_copy = target_joint_values;
+                has_new_target = false; // 取完数据立即复位标记
             }
-            else
-            {
-                RCLCPP_WARN(rclcpp::get_logger("jaka_planner"), "❌ 规划失败，请微调摇杆位置！");
-            }
-            // 重置指令标记，等待下一次摇杆操作
-            has_new_target = false;
+
+            // ✅ 核心修正 4：使用 asyncMove() 异步执行
+            // 不要用 move()！move() 会卡死线程直到运动结束。
+            // asyncMove() 会立即触发运动并返回，允许我们在运动过程中
+            // 随时发送新的指令来修正路径（实现"插队"）。
+            move_group.setJointValueTarget(target_copy);
+            move_group.asyncMove(); 
         }
         rate.sleep();
     }
-    // =============================================================
 
     rclcpp::shutdown();
-    if (spinner_thread.joinable()) {
-        spinner_thread.join();
-    }
-
+    spinner_thread.join();
     return 0;
 }
