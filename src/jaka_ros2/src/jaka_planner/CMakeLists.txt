@@ -23,7 +23,8 @@ find_package(control_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 find_package(moveit_visual_tools REQUIRED)
 find_package(moveit_core REQUIRED)
-
+find_package(tf2_eigen REQUIRED) 
+find_package(Eigen3 REQUIRED) 
 
 # Optionally find additional dependencies
 # find_package(Boost REQUIRED)
@@ -68,6 +69,8 @@ ament_target_dependencies(jaka_test
   moveit_ros_planning_interface
   moveit_visual_tools
   moveit_core
+  tf2_eigen 
+  Eigen3    
 )
 
 # include_directories(

@@ -6,41 +6,42 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <vector>
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+// 引入 RobotState 用于高级 IK 计算
+#include <moveit/robot_state/robot_state.h>
+#include <tf2_eigen/tf2_eigen.hpp> 
 
 using namespace std;
 
-// 全局变量
+// ====== 全局变量 ======
 std::vector<double> target_joint_values(6, 0.0);
-geometry_msgs::msg::Twist target_cart_twist; // 存储笛卡尔增量
+geometry_msgs::msg::Twist target_cart_twist;
 std::mutex data_mutex;
-std::atomic<int> control_mode{0}; // 0: 无/关节控制, 1: 笛卡尔控制
+std::atomic<int> control_mode{0}; 
 
+// 放开限位
 const std::vector<double> JOINT_MIN = {-6.28, -6.28, -6.28, -6.28, -6.28, -6.28};
 const std::vector<double> JOINT_MAX = { 6.28,  6.28,  6.28,  6.28,  6.28,  6.28};
 
-// 关节回调
 void jointTargetCallback(const std_msgs::msg::Float64MultiArray::SharedPtr joint_msg)
 {
     if(joint_msg->data.size() != 6) return;
     std::lock_guard<std::mutex> lock(data_mutex);
-    for(int i=0; i<6; i++) {
-        target_joint_values[i] = std::max(JOINT_MIN[i], std::min(JOINT_MAX[i], joint_msg->data[i]));
-    }
-    control_mode = 0; // 标记为关节模式
+    for(int i=0; i<6; i++) target_joint_values[i] = joint_msg->data[i];
+    control_mode = 0; 
 }
 
-// 笛卡尔回调 (Twist)
 void cartesianTargetCallback(const geometry_msgs::msg::Twist::SharedPtr twist_msg)
 {
     std::lock_guard<std::mutex> lock(data_mutex);
     target_cart_twist = *twist_msg;
-    // 只有当有有效输入时，才激活笛卡尔模式
-    if(abs(twist_msg->linear.x) > 0.001 || abs(twist_msg->linear.y) > 0.001 || abs(twist_msg->linear.z) > 0.001 ||
-       abs(twist_msg->angular.x) > 0.001 || abs(twist_msg->angular.y) > 0.001 || abs(twist_msg->angular.z) > 0.001)
+    if(abs(twist_msg->linear.x) > 0.0001 || abs(twist_msg->linear.y) > 0.0001 || abs(twist_msg->linear.z) > 0.0001 ||
+       abs(twist_msg->angular.x) > 0.0001 || abs(twist_msg->angular.y) > 0.0001 || abs(twist_msg->angular.z) > 0.0001)
     {
-        control_mode = 1; // 标记为笛卡尔模式
+        control_mode = 1; 
     }
 }
 
@@ -54,46 +55,51 @@ int main(int argc, char **argv)
     rclcpp::QoS qos_profile(1); 
     qos_profile.reliability(rclcpp::ReliabilityPolicy::BestEffort);
 
-    // 订阅 1: 关节控制
     auto joint_sub = node->create_subscription<std_msgs::msg::Float64MultiArray>(
         "/jaka_target_joints", qos_profile, jointTargetCallback);
 
-    // 订阅 2: 笛卡尔控制 (新)
     auto cart_sub = node->create_subscription<geometry_msgs::msg::Twist>(
         "/jaka_cartesian_cmd", qos_profile, cartesianTargetCallback);
 
-    std::string PLANNING_GROUP = "jaka_zu20"; // ⚠️ 请确认组名
+    // ⚠️ 确认组名
+    std::string PLANNING_GROUP = "jaka_zu20"; 
     moveit::planning_interface::MoveGroupInterface move_group(node, PLANNING_GROUP);
+    
+    // 获取 RobotModel 和 RobotState (用于手动 IK 解算)
+    moveit::core::RobotModelConstPtr robot_model = move_group.getRobotModel();
+    moveit::core::RobotStatePtr kinematic_state = move_group.getCurrentState();
+    const moveit::core::JointModelGroup* joint_model_group = robot_model->getJointModelGroup(PLANNING_GROUP);
 
     move_group.setMaxVelocityScalingFactor(1.0);     
     move_group.setMaxAccelerationScalingFactor(1.0); 
-    // 笛卡尔运动需要更短的规划时间
-    move_group.setPlanningTime(0.05); 
+    move_group.setPlanningTime(0.05);
+    // 强制设置参考坐标系为基座，防止飘飞
+    move_group.setPoseReferenceFrame("base_link"); 
 
     rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node);
     std::thread spinner_thread([&executor]() { executor.spin(); });
 
-    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "🔥 全能模式启动 (Joint + Cartesian)");
+    RCLCPP_INFO(rclcpp::get_logger("jaka_planner"), "🔥 防乱飞版控制启动 (Anti-Flip IK)");
 
     rclcpp::Rate rate(50); 
     
     while(rclcpp::ok())
     {
-        int current_mode_local = control_mode.exchange(0); // 读取并重置为0，避免重复执行
+        int current_mode_local = control_mode.exchange(0);
 
-        if(current_mode_local == 0 && target_joint_values.size() == 6) 
+        // 更新当前的运动学状态
+        kinematic_state = move_group.getCurrentState();
+
+        if(current_mode_local == 0) 
         {
-            // === 关节模式处理 ===
-            // (注意：这里需要判断 target_joint_values 是否被初始化过，简单起见假设初始非全0或已校准)
-            // 实际工程中最好加个 flag has_new_joint_target
-            // 为了简化代码逻辑，这里假设 Python 一直在发最新的
+            // === 关节模式 (保持不变) ===
             std::vector<double> target_copy;
             {
                 std::lock_guard<std::mutex> lock(data_mutex);
                 target_copy = target_joint_values;
             }
-            // 简单判断一下是否全是0 (防止刚启动归零)
+            // 简单防抖
             double sum = 0; for(auto v:target_copy) sum+=abs(v);
             if(sum > 0.01) {
                 move_group.setJointValueTarget(target_copy);
@@ -102,38 +108,77 @@ int main(int argc, char **argv)
         }
         else if (current_mode_local == 1)
         {
-            // === 笛卡尔模式处理 ===
+            // === 笛卡尔模式 (引入 IK 校验) ===
             geometry_msgs::msg::Twist twist;
             {
                 std::lock_guard<std::mutex> lock(data_mutex);
                 twist = target_cart_twist;
             }
 
-            // 1. 获取当前位姿
-            geometry_msgs::msg::PoseStamped current_pose = move_group.getCurrentPose();
-            
-            // 2. 叠加线性增量 (简单的 Euler 积分)
-            // 注意：这里是在"基坐标系"下移动。如果想在"工具坐标系"移动，需要矩阵变换 (略微复杂)
-            current_pose.pose.position.x += twist.linear.x;
-            current_pose.pose.position.y += twist.linear.y;
-            current_pose.pose.position.z += twist.linear.z;
+            // 1. 计算目标 Pose
+            const Eigen::Isometry3d& current_pose_eigen = kinematic_state->getGlobalLinkTransform("Link_06"); 
+            geometry_msgs::msg::Pose current_pose = tf2::toMsg(current_pose_eigen);
 
-            // 3. 叠加旋转增量 (使用四元数乘法)
-            tf2::Quaternion q_orig, q_rot, q_new;
-            tf2::fromMsg(current_pose.pose.orientation, q_orig);
+            // 2. 矩阵变换 (Local -> Global)
+            tf2::Quaternion q_current;
+            tf2::fromMsg(current_pose.orientation, q_current);
+            tf2::Matrix3x3 mat_rot(q_current);
             
-            // 将角速度转换为微小旋转四元数 (RPY)
-            q_rot.setRPY(twist.angular.x, twist.angular.y, twist.angular.z);
-            
-            q_new = q_orig * q_rot; // 局部旋转
-            // q_new = q_rot * q_orig; // 全局旋转 (根据需求选)
+            tf2::Vector3 vec_local(twist.linear.x, twist.linear.y, twist.linear.z);
+            tf2::Vector3 vec_global = mat_rot * vec_local;
+
+            // 钳制步长 (2mm)
+            double max_step = 0.002;
+            if (vec_global.length() > max_step) vec_global = vec_global.normalized() * max_step;
+
+            current_pose.position.x += vec_global.x();
+            current_pose.position.y += vec_global.y();
+            current_pose.position.z += vec_global.z();
+
+            tf2::Quaternion q_delta;
+            q_delta.setRPY(twist.angular.x, twist.angular.y, twist.angular.z);
+            tf2::Quaternion q_new = q_current * q_delta;
             q_new.normalize();
-            current_pose.pose.orientation = tf2::toMsg(q_new);
+            current_pose.orientation = tf2::toMsg(q_new);
 
-            // 4. 执行
-            move_group.setPoseTarget(current_pose);
-            // 笛卡尔规划容易失败(IK解算失败)，asyncMove如果不成功通常会打印警告
-            move_group.asyncMove();
+            // ==============================================================
+            // 🛡️ 核心防乱飞逻辑：手动 IK 解算与校验
+            // ==============================================================
+            
+            // 3. 记录当前的关节角度
+            std::vector<double> current_joints;
+            kinematic_state->copyJointGroupPositions(joint_model_group, current_joints);
+
+            // 4. 调用 IK 解算器 (寻找离 current_joints 最近的解)
+            // timeout 设置为 0.05s
+            bool found_ik = kinematic_state->setFromIK(joint_model_group, current_pose, 0.05);
+
+            if (found_ik)
+            {
+                std::vector<double> new_joints;
+                kinematic_state->copyJointGroupPositions(joint_model_group, new_joints);
+
+                // 5. 检查解的连续性 (防止突变)
+                bool is_safe = true;
+                for(size_t i=0; i<6; i++) {
+                    // 如果任何一个关节需要在 20ms 内转动超过 0.5 弧度 (约30度)，说明构型翻转了
+                    if(abs(new_joints[i] - current_joints[i]) > 0.5) {
+                        is_safe = false;
+                        break;
+                    }
+                }
+
+                if(is_safe) {
+                    // 如果解是安全的（离当前位置很近），则执行
+                    move_group.setJointValueTarget(new_joints);
+                    move_group.asyncMove();
+                } else {
+                    RCLCPP_WARN(rclcpp::get_logger("jaka_planner"), "⚠️ 拒绝执行：检测到构型翻转 (Joint Jump)");
+                }
+            }
+            else {
+                // RCLCPP_WARN(rclcpp::get_logger("jaka_planner"), "无 IK 解");
+            }
         }
 
         rate.sleep();
