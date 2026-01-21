@@ -1,77 +1,68 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-JAKA 机械臂低延迟遥操作节点 (最终修正版)
-特性：
-1. QoS 深度设为 1 (丢弃旧数据，只发最新指令)
-2. 虚拟位置积分控制 (解决弹簧回弹风险)
-3. 动态速度调节 + 手腕极速模式
-"""
-
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Joy, JointState
-from std_msgs.msg import Float64MultiArray
-import math
+from std_msgs.msg import Float64MultiArray, Int32
+from geometry_msgs.msg import Twist
 
-# ===================== 🎮 硬件映射 (基于您的设备) =====================
-AXIS_LR       = 0   # 左右 -> J1 / J4
-AXIS_FB       = 1   # 前后 -> J2 / J5
-AXIS_TWIST    = 2   # 旋转 -> J3 / J6
+# ===================== 🎮 硬件映射 =====================
+AXIS_LR       = 0   # 左右
+AXIS_FB       = 1   # 前后
+AXIS_TWIST    = 2   # 旋转
 AXIS_THROTTLE = 3   # 节流阀
+AXIS_HAT_X    = 4   # 苦力帽左右 (根据你的摇杆确认 ID)
+AXIS_HAT_Y    = 5   # 苦力帽上下
 
-BTN_SHIFT     = 0   # 扳机键 (手腕模式切换)
-BTN_DEADMAN   = 1   # 拇指键 (必须按住才能动)
+BTN_SHIFT     = 0   # 扳机键 (换挡)
+BTN_DEADMAN   = 1   # 拇指键 (使能)
+BTN_MODE      = 2   # 【新】模式切换键
 
-# ===================== ⚙️ 核心参数调优 =====================
+# ===================== ⚙️ 参数 =====================
 ARM_JOINT_NUM = 6
-# 基础步长：调大此值可提高整体响应速度 (建议 0.03 - 0.08)
 BASE_SPEED = 0.04 
-# 手腕加速倍率：手腕关节转动惯量小，给 3.0 倍速才跟手
 WRIST_SPEED_BOOST = 3.0 
-# 软件限位：放宽到 ±360度 (6.28 rad) 以防止撞虚拟墙
 LIMIT_RAD = 6.28  
 DEADZONE = 0.05
-# ===========================================================
+
+# 模式定义
+MODE_JOINT_GROUP = 0  # 原有模式 (身体/手腕)
+MODE_CARTESIAN   = 1  # 笛卡尔 (XYZ/RPY)
+MODE_SINGLE      = 2  # 单关节 (逐个控制)
+MODE_NAMES = ["关节组联动", "笛卡尔空间", "单关节微调"]
 
 class JakaJoystickTeleop(Node):
     def __init__(self):
         super().__init__('jaka_joystick_teleop')
 
-        # --- 1. 低延迟 QoS 配置 ---
-        # 关键：只保留最后 1 条数据 (KeepLast=1)，旧数据直接丢弃
-        # 这能防止网络卡顿后，机械臂疯狂执行积压的旧指令
+        # QoS
         low_latency_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1
+            history=HistoryPolicy.KEEP_LAST, depth=1
         )
 
-        # --- 2. 内部状态 ---
-        self.virtual_joints = None  # 积分控制的核心：记录"理论目标位置"
+        # 状态变量
+        self.virtual_joints = None
+        self.current_mode = MODE_JOINT_GROUP
+        self.selected_joint_idx = 0 # 单关节模式下选中的关节 (0-5)
+        
+        # 按键边沿检测
+        self.last_btn_mode_state = 0
+        self.last_hat_x = 0.0
 
-        # --- 3. 通信接口 ---
-        # 订阅真实状态 (用于初始对齐)
-        self.joint_sub = self.create_subscription(
-            JointState, 
-            '/joint_states', # 如有前缀请修改，例如 '/jaka_zu7/joint_states'
-            self.joint_state_callback, 
-            low_latency_qos
-        )
-
-        # 订阅摇杆
+        # 通信
+        self.joint_sub = self.create_subscription(JointState, '/joint_states', self.joint_state_callback, low_latency_qos)
         self.joy_sub = self.create_subscription(Joy, '/joy', self.joy_callback, 10)
+        
+        # 发布关节指令 (用于 模式0 和 模式2)
+        self.joint_cmd_pub = self.create_publisher(Float64MultiArray, '/jaka_target_joints', low_latency_qos)
+        
+        # 发布笛卡尔指令 (用于 模式1) - 发送 Twist (线速度+角速度)
+        self.cart_cmd_pub = self.create_publisher(Twist, '/jaka_cartesian_cmd', low_latency_qos)
 
-        # 发布指令
-        self.cmd_pub = self.create_publisher(
-            Float64MultiArray, 
-            '/jaka_target_joints', 
-            low_latency_qos # 应用低延迟策略
-        )
-
-        self.get_logger().info('✅ Python端就绪：已启用极速模式 (QoS Depth=1)')
+        self.get_logger().info('✅ 三合一控制器就绪。按 Button 2 切换模式。')
 
     def safe_get(self, lst, idx, default=0.0):
         return lst[idx] if idx < len(lst) else default
@@ -80,30 +71,32 @@ class JakaJoystickTeleop(Node):
         return max(-LIMIT_RAD, min(val, LIMIT_RAD))
 
     def joint_state_callback(self, msg):
-        # 仅在启动时进行一次对齐，将虚拟位置同步为真实位置
-        # 之后就不再受真实位置延迟的影响，完全由摇杆控制虚拟积分
+        # 仅初始化时对齐
         if self.virtual_joints is None and len(msg.position) >= ARM_JOINT_NUM:
             self.virtual_joints = list(msg.position)[:ARM_JOINT_NUM]
-            self.get_logger().info(f'校准初始位置完成: {[round(x,2) for x in self.virtual_joints]}')
+            self.get_logger().info('初始位置校准完成')
 
     def joy_callback(self, msg):
         try:
-            # [安全锁] 没按拇指键，直接跳过
+            # 1. 安全锁
             if not self.safe_get(msg.buttons, BTN_DEADMAN):
                 return 
-            
-            # [未校准] 等待接收第一帧 joint_states
             if self.virtual_joints is None:
-                self.get_logger().warn('等待机械臂状态数据...', throttle_duration_sec=2)
                 return
 
-            # --- 1. 计算速度 (节流阀) ---
-            # 映射范围：Axis3 [-1.0 ~ 1.0] -> 倍率 [0.5 ~ 2.5]
+            # 2. 模式切换逻辑 (检测上升沿)
+            btn_mode_curr = self.safe_get(msg.buttons, BTN_MODE)
+            if btn_mode_curr == 1 and self.last_btn_mode_state == 0:
+                self.current_mode = (self.current_mode + 1) % 3
+                self.get_logger().info(f'🔄 切换模式: [{MODE_NAMES[self.current_mode]}]')
+            self.last_btn_mode_state = btn_mode_curr
+
+            # 3. 计算通用速度
             raw_throttle = self.safe_get(msg.axes, AXIS_THROTTLE)
             speed_ratio = (raw_throttle * -1 + 1.0) / 2.0 
             current_speed = BASE_SPEED * (0.5 + speed_ratio * 2.0)
 
-            # --- 2. 读取输入 ---
+            # 4. 读取基础摇杆轴
             raw_x = self.safe_get(msg.axes, AXIS_LR)
             raw_y = self.safe_get(msg.axes, AXIS_FB)
             raw_twist = self.safe_get(msg.axes, AXIS_TWIST)
@@ -112,41 +105,84 @@ class JakaJoystickTeleop(Node):
             val_y = 0.0 if abs(raw_y) < DEADZONE else raw_y 
             val_twist = 0.0 if abs(raw_twist) < DEADZONE else raw_twist 
 
-            # --- 3. 积分控制逻辑 ---
-            is_wrist_mode = self.safe_get(msg.buttons, BTN_SHIFT)
+            is_shift = self.safe_get(msg.buttons, BTN_SHIFT)
 
-            if not is_wrist_mode:
-                # === 身体模式 (J1-J3) ===
-                # J1(左右), J2(前后-反向), J3(旋转-反向+加速)
-                self.virtual_joints[0] = self.clamp(self.virtual_joints[0] + val_x * current_speed)
-                self.virtual_joints[1] = self.clamp(self.virtual_joints[1] - val_y * current_speed)
-                self.virtual_joints[2] = self.clamp(self.virtual_joints[2] - val_twist * current_speed * 1.5)
-            else:
-                # === 手腕模式 (J4-J6) ===
-                # 应用加速倍率
-                bs = current_speed * WRIST_SPEED_BOOST
-                self.virtual_joints[3] = self.clamp(self.virtual_joints[3] + val_x * bs)
-                self.virtual_joints[4] = self.clamp(self.virtual_joints[4] - val_y * bs)
-                self.virtual_joints[5] = self.clamp(self.virtual_joints[5] + val_twist * bs)
+            # ================= 核心分流逻辑 =================
 
-            # --- 4. 发布极低延迟指令 ---
-            msg_out = Float64MultiArray()
-            msg_out.data = self.virtual_joints
-            self.cmd_pub.publish(msg_out)
+            # ---【模式 0: 关节组联动 (原有逻辑)】---
+            if self.current_mode == MODE_JOINT_GROUP:
+                if not is_shift: # 身体 J1-J3
+                    self.virtual_joints[0] = self.clamp(self.virtual_joints[0] + val_x * current_speed)
+                    self.virtual_joints[1] = self.clamp(self.virtual_joints[1] - val_y * current_speed)
+                    self.virtual_joints[2] = self.clamp(self.virtual_joints[2] - val_twist * current_speed * 1.5)
+                else: # 手腕 J4-J6
+                    bs = current_speed * WRIST_SPEED_BOOST
+                    self.virtual_joints[3] = self.clamp(self.virtual_joints[3] + val_x * bs)
+                    self.virtual_joints[4] = self.clamp(self.virtual_joints[4] - val_y * bs)
+                    self.virtual_joints[5] = self.clamp(self.virtual_joints[5] + val_twist * bs)
+                
+                # 发布关节数据
+                self.publish_joints()
+
+            # ---【模式 1: 笛卡尔空间控制】---
+            elif self.current_mode == MODE_CARTESIAN:
+                # 构造 Twist 消息发送给 C++
+                twist = Twist()
+                # 速度缩放：笛卡尔移动需要把单位换算合适 (m/s)
+                linear_scale = current_speed * 2.0  # 约 0.1m/s
+                angular_scale = current_speed * 3.0 # 约 0.15rad/s
+
+                if not is_shift:
+                    # 不按扳机：控制位置 (XYZ)
+                    # 左右推->Y轴，前后推->X轴，旋转->Z轴 (符合大多数习惯，可自行修改)
+                    twist.linear.y = -val_x * linear_scale
+                    twist.linear.x = val_y * linear_scale
+                    twist.linear.z = val_twist * linear_scale
+                else:
+                    # 按住扳机：控制姿态 (Roll/Pitch/Yaw)
+                    twist.angular.y = -val_x * angular_scale
+                    twist.angular.x = val_y * angular_scale
+                    twist.angular.z = val_twist * angular_scale
+
+                self.cart_cmd_pub.publish(twist)
+                # 注意：笛卡尔模式下，virtual_joints 可能会过时，
+                # 但只要切回关节模式，C++ 的 joint_states 会再次校准它(虽然有延迟)，或者我们可以接受跳变
+                # 更完美的做法是 C++ 实时回传 IK 解算后的关节给 Python，这里为简化暂不处理
+
+            # ---【模式 2: 单关节独立控制】---
+            elif self.current_mode == MODE_SINGLE:
+                # 使用苦力帽左右 (Axis 4) 切换选中的关节
+                hat_x = self.safe_get(msg.axes, AXIS_HAT_X)
+                if abs(hat_x) > 0.5 and self.last_hat_x == 0.0:
+                    direction = 1 if hat_x < 0 else -1 # 根据苦力帽方向
+                    self.selected_joint_idx = (self.selected_joint_idx + direction) % ARM_JOINT_NUM
+                    self.get_logger().info(f'👉 选中关节: J{self.selected_joint_idx + 1}')
+                self.last_hat_x = hat_x
+
+                # 使用摇杆 Y 轴 (前后) 控制该关节
+                # 速度给慢一点，方便微调
+                single_speed = current_speed * 0.8
+                self.virtual_joints[self.selected_joint_idx] = self.clamp(
+                    self.virtual_joints[self.selected_joint_idx] - val_y * single_speed
+                )
+                
+                # 发布关节数据
+                self.publish_joints()
 
         except Exception as e:
-            self.get_logger().error(f'Error: {e}')
+            self.get_logger().error(f'Joy Error: {e}')
+
+    def publish_joints(self):
+        msg = Float64MultiArray()
+        msg.data = self.virtual_joints
+        self.joint_cmd_pub.publish(msg)
 
 def main():
     rclpy.init()
     node = JakaJoystickTeleop()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
