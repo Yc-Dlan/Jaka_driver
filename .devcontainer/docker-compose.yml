@@ -16,6 +16,7 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix
       - ./..:/home/yc-dlan/jaka_ws
       - /dev:/dev
+      - /run/udev:/run/udev:ro
     network_mode: host
     pid: "host" # 添加 pid 命名空间共享
     ipc: "host" # 添加 ipc 命名空间共享    
