@@ -47,6 +47,9 @@ RUN apt-get update \
     && apt-get install -y ros-humble-ign-ros2-control ros-humble-moveit-visual-tools
 
 RUN apt-get update \
+    && apt-get install -y ros-humble-ros2-control ros-humble-ros2-controllers ros-humble-gz-ros2-control
+    
+RUN apt-get update \
     && apt-get install -y libssl-dev libusb-1.0-0-dev libudev-dev pkg-config libgtk-3-dev
 
 RUN apt-get update \
