@@ -61,6 +61,10 @@ RUN mkdir -p lib \
     && cmake -DFORCE_RSUSB_BACKEND=true ../ -DBUILD_EXAMPLES=true \
     && sudo make uninstall && make clean && make -j$(($(nproc)-1)) && sudo make install
 
+# 安装八叉树地图
+RUN apt-get update \
+    && apt-get install -y ros-humble-octomap-server ros-humble-octomap-rviz-plugins
+
 # 清理apt缓存以减少镜像大小
 RUN apt-get clean \
     && rm -rf /var/lib/apt/lists/*

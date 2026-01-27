@@ -24,7 +24,8 @@ setup(
     entry_points={
         'console_scripts': [
             'logitech_control = teleop_driver.logitech_control:main',
-            'hybrid_control = teleop_driver.hybrid_control:main'
+            'hybrid_control = teleop_driver.hybrid_control:main',
+            'CBF_control = teleop_driver.CBF_control:main'
         ],
     },
 )

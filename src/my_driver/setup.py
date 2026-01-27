@@ -28,6 +28,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'octomap_test = my_driver.octomap_test:main'
         ],
     },
 )
