@@ -1,9 +1,3 @@
-/**
- * 文件名: cbf_filter.hpp
- * 位置: jaka_planner/include/jaka_planner/cbf_filter.hpp
- * 功能: 封装 CBF 避障算法与可视化 (修复 Link 名称版)
- */
-
 #ifndef CBF_FILTER_HPP
 #define CBF_FILTER_HPP
 
@@ -34,12 +28,11 @@ public:
             cfg_.obs_pos.x(), cfg_.obs_pos.y(), cfg_.obs_pos.z());
     }
 
-    // === 核心接口：输入原始速度，原地修改为安全速度 ===
     bool filter(moveit::core::RobotStatePtr robot_state, 
                 const moveit::core::JointModelGroup* jmg, 
                 Eigen::VectorXd& q_dot_cmd) 
     {
-        // 1. 定义胶囊体 (Link Name 必须正确，用于 Jacobian 计算)
+        // 定义胶囊体
         struct Capsule { Eigen::Vector3d p1, p2; std::string link_id; };
         std::vector<Capsule> capsules;
         
@@ -47,7 +40,6 @@ public:
             return robot_state->getGlobalLinkTransform(link).translation();
         };
 
-        // 🛑 [关键修复] 使用 Link_0X (带前导零)
         try {
             capsules.push_back({getPos("Link_02"), getPos("Link_03"), "Link_03"}); // 上臂
             capsules.push_back({getPos("Link_03"), getPos("Link_05"), "Link_05"}); // 前臂 (忽略 Link_04)
@@ -57,7 +49,7 @@ public:
             return false;
         }
 
-        // 2. 寻找最近点
+        // 寻找最近点
         double min_h = 999.0;
         Eigen::Vector3d closest_robot; // 已移除 closest_obs 以消除警告
         std::string critical_link;
@@ -75,14 +67,13 @@ public:
             }
         }
 
-        // 3. 可视化 (无论是否介入都画出来，方便调试)
+        // 可视化
         publishViz(closest_robot, min_h);
 
-        // 4. 安全判断
+        // 安全判断
         if (min_h > cfg_.safe_dist_threshold) return false; // 安全，无需介入
 
-        // 5. 计算梯度与修正
-        // 梯度方向 n = (Robot - Obs) / |dist| (远离障碍物的方向)
+        // 计算梯度与修正
         Eigen::Vector3d n = (closest_robot - cfg_.obs_pos).normalized();
 
         // 转换到局部坐标系求雅可比
@@ -94,7 +85,7 @@ public:
             return false;
         }
 
-        // 提取线速度相关的 Jacobian (前3行)
+        // 提取线速度相关的 Jacobian 
         Eigen::MatrixXd J_lin = J.topRows(3);
         
         // 投影: v_danger = n^T * J * q_dot
@@ -104,7 +95,6 @@ public:
 
         if (v_danger < limit) {
             // 需要修正
-            // 公式: q_safe = q - lambda * (n^T * J)^T
             Eigen::VectorXd J_n = (n.transpose() * J_lin).transpose(); // 6x1 向量
             
             double lambda = (limit - v_danger) / (J_n.dot(J_n) + 1e-6);

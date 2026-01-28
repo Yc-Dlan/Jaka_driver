@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
@@ -8,12 +5,10 @@ from std_msgs.msg import Float64MultiArray
 from geometry_msgs.msg import Twist
 import time
 
-# === 参数配置 ===
 MAX_LIN_VEL = 0.15   # 笛卡尔线速度: m/s
 MAX_ANG_VEL = 0.4    # 笛卡尔角速度: rad/s
 MAX_JOINT_VEL = 0.5  # 单关节角速度: rad/s
 
-# 罗技手柄映射
 AXIS_X, AXIS_Y, AXIS_TWIST, AXIS_THROTTLE = 0, 1, 2, 3
 BTN_TRIGGER = 0
 BTN_DEADMAN = 1 # 安全键
@@ -27,13 +22,11 @@ class JakaManualTeleop(Node):
         
         self.joy_sub = self.create_subscription(Joy, '/joy', self.joy_cb, 10)
         self.cart_pub = self.create_publisher(Twist, '/jaka_cartesian_cmd', 10)
-        # 注意：这里发布的将是"关节速度"向量，而不是位置
         self.joint_pub = self.create_publisher(Float64MultiArray, '/jaka_target_joints', 10)
 
         self.mode = "CARTESIAN"
-        self.active_joint_index = 0 # 当前选中的关节 (0~5)
+        self.active_joint_index = 0
         
-        # 按键边沿检测
         self.last_btns = {} 
         
         self.get_logger().info("✅ 单关节/笛卡尔混合控制已启动")
@@ -42,10 +35,8 @@ class JakaManualTeleop(Node):
     def joy_cb(self, msg):
         if not msg.buttons[BTN_DEADMAN]: return
 
-        # --- 1. 处理按键事件 (上升沿检测) ---
         self.handle_buttons(msg)
 
-        # --- 2. 数据预处理 ---
         # 速度倍率
         ratio = ((-msg.axes[AXIS_THROTTLE] + 1) / 2) * 0.8 + 0.2
         
@@ -71,8 +62,6 @@ class JakaManualTeleop(Node):
             # 构建 6维 速度向量
             joint_vels = [0.0] * 6
             
-            # 只给当前选中的关节赋值
-            # 注意：val_y 推上去是正，拉下来是负
             joint_vels[self.active_joint_index] = val_y * MAX_JOINT_VEL * ratio
             
             cmd = Float64MultiArray()
@@ -80,7 +69,7 @@ class JakaManualTeleop(Node):
             self.joint_pub.publish(cmd)
 
     def handle_buttons(self, msg):
-        # 辅助函数：检测按键是否刚刚被按下
+
         def is_pressed(idx):
             return msg.buttons[idx] == 1 and self.last_btns.get(idx, 0) == 0
 

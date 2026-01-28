@@ -1,7 +1,4 @@
-/**
- * 文件路径: jaka_planner/src/hybrid_servo_node.cpp
- * 修复: QoS匹配解决死锁 + 积分算法消除抖动
- */
+
 
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
@@ -19,12 +16,12 @@ using namespace std::chrono_literals;
 class HybridServoNode : public rclcpp::Node {
 public:
     HybridServoNode() : Node("hybrid_test") {
-        // 1. 初始化所有时间戳，防止启动时的逻辑错误
+        // 初始化所有时间戳
         last_cart_time_ = this->now();
         last_joint_time_ = this->now();
         last_cmd_time_ = this->now(); 
 
-        // 2. 订阅控制指令
+        // 订阅控制指令
         cart_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/jaka_cartesian_cmd", 10, 
             [this](const geometry_msgs::msg::Twist::SharedPtr msg){ 
@@ -45,8 +42,7 @@ public:
                 mode_ = JOINT_SINGLE;
             });
 
-        // 3. [关键修复] 使用 SensorDataQoS (Best Effort) 订阅状态
-        // 解决因 QoS 不匹配导致永远收不到 joint_states 的问题
+        // 使用 SensorDataQoS (Best Effort) 订阅状态
         state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
             "/joint_states", rclcpp::SensorDataQoS(), 
             [this](const sensor_msgs::msg::JointState::SharedPtr msg){
@@ -55,7 +51,7 @@ public:
                 is_sensor_received_ = true; // 标记数据已送达
             });
 
-        // 4. 直连控制器发布
+        // 直连控制器发布
         traj_pub_ = this->create_publisher<trajectory_msgs::msg::JointTrajectory>(
             "/jaka_zu20_controller/joint_trajectory", 10);
 
@@ -207,7 +203,7 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     rclcpp::executors::MultiThreadedExecutor executor;
     auto node = std::make_shared<HybridServoNode>();
-    node->init(); // 必须调用
+    node->init(); 
     executor.add_node(node);
     executor.spin();
     rclcpp::shutdown();

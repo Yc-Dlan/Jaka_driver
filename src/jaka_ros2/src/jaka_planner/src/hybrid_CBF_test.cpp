@@ -14,7 +14,6 @@
 #include <Eigen/Geometry>
 #include <mutex>
 
-// 🌟 引入模块化的 CBF 头文件
 #include "jaka_planner/CBF_filter.hpp" 
 
 using namespace std::chrono_literals;
@@ -67,12 +66,10 @@ public:
         
         canonical_joint_names_ = joint_model_group_->getVariableNames();
         
-        // 🛑 [关键修复] 使用 Link_06
         end_effector_link_ = "Link_06"; 
         
         internal_target_joints_.clear();
 
-        // 🌟 初始化 CBF 模块
         cbf_filter_.init(shared_from_this());
         
         RCLCPP_INFO(this->get_logger(), "✅ 控制器已启动");
@@ -104,7 +101,6 @@ private:
     rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr traj_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
 
-    // 🌟 声明 CBF 过滤器实例
     CBFFilter cbf_filter_;
 
     void controlLoop() {
@@ -113,7 +109,6 @@ private:
         bool is_active = (this->now() - last_cmd_time_).seconds() < 0.5;
         if (!is_active) {
             if (mode_ != IDLE) { need_resync_ = true; mode_ = IDLE; }
-            // 注意：这里删除了 return，即使 IDLE 也要往下跑，为了让 CBF 刷新可视化
         }
 
         // 同步逻辑
