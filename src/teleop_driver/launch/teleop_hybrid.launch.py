@@ -60,8 +60,8 @@ def generate_launch_description():
         # 4. 启动 C++ 执行节点 (你的 main.cpp 编译出的可执行文件)
         Node(
             package=cpp_pkg_name,
-            executable='hybrid_test', # CMakeLists.txt 中 add_executable 的名字
-            name='hybrid_test',
+            executable='hybrid_CBF_test', # CMakeLists.txt 中 add_executable 的名字
+            name='hybrid_CBF_test',
             output='screen',
             # 关键：加载 Kinematics.yaml 才能做防乱飞解算
             parameters=[
