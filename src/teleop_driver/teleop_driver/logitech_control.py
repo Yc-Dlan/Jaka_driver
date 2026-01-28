@@ -83,25 +83,25 @@ class JakaJoystickTeleop(Node):
 
     def joy_callback(self, msg):
         try:
-            # 1. 安全锁检查
+            # 安全锁检查
             if not self.safe_get(msg.buttons, BTN_DEADMAN):
                 return 
             if self.virtual_joints is None:
                 return
 
-            # 2. 模式切换 (上升沿检测)
+            # 模式切换 (上升沿检测)
             btn_mode = self.safe_get(msg.buttons, BTN_MODE)
             if btn_mode == 1 and self.last_btn_mode_state == 0:
                 self.current_mode = (self.current_mode + 1) % 3
                 self.get_logger().info(f'🔄 切换模式: [{MODE_NAMES[self.current_mode]}]')
             self.last_btn_mode_state = btn_mode
 
-            # 3. 速度计算
+            # 速度计算
             raw_throttle = self.safe_get(msg.axes, AXIS_THROTTLE)
             speed_ratio = (raw_throttle * -1 + 1.0) / 2.0 
             current_speed = BASE_SPEED * (0.5 + speed_ratio * 2.0)
 
-            # 4. 读取摇杆 (基础量)
+            # 读取摇杆 (基础量)
             raw_x = self.safe_get(msg.axes, AXIS_LR)
             raw_y = self.safe_get(msg.axes, AXIS_FB)
             raw_twist = self.safe_get(msg.axes, AXIS_TWIST)
@@ -112,9 +112,7 @@ class JakaJoystickTeleop(Node):
 
             is_shift = self.safe_get(msg.buttons, BTN_SHIFT)
 
-            # ================= 核心分流逻辑 =================
 
-            # ---【模式 0: 关节组联动 (Body/Wrist)】---
             if self.current_mode == MODE_JOINT_GROUP:
                 if not is_shift: # 身体 J1-J3
                     self.virtual_joints[0] = self.clamp(self.virtual_joints[0] + val_x * current_speed)
@@ -128,14 +126,10 @@ class JakaJoystickTeleop(Node):
                 
                 self.publish_joints()
 
-            # ---【模式 1: 笛卡尔空间 (工具坐标系)】---
+
             elif self.current_mode == MODE_CARTESIAN:
                 twist = Twist()
                 
-                # 🛑 [关键修复] 笛卡尔位置单位是米(m)。
-                # 0.04 * 0.02 = 0.0008m/帧 = 0.8mm/帧。
-                # 50Hz 下速度约为 4cm/s。这是一个安全的可控速度。
-                # 之前如果用了 1.5，速度会达到 3m/s，导致乱飞。
                 lin_scale = current_speed * 0.02 
                 ang_scale = current_speed * 0.5  # 角速度单位是弧度，可以稍大
 
@@ -155,7 +149,6 @@ class JakaJoystickTeleop(Node):
 
                 self.cart_cmd_pub.publish(twist)
 
-            # ---【模式 2: 单关节微调】---
             elif self.current_mode == MODE_SINGLE:
                 # 苦力帽选关节
                 hat_x = self.safe_get(msg.axes, AXIS_HAT_X)
