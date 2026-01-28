@@ -9,7 +9,7 @@ ARG USER_GID=$USER_UID
 ARG ROS_DISTRO=humble
 
 RUN apt-get update \
-    && apt-get install -y sudo vim nautilus curl lsb-release gnupg
+    && apt-get install -y sudo vim nautilus curl lsb-release gnupg git wget cmake build-essential
 
 # 创建用户组和用户
 RUN groupadd --gid $USER_GID $USERNAME \
@@ -31,20 +31,42 @@ RUN apt-get update \
     && apt-get install -y ros-humble-moveit
 
 # 安装Gazebo Fortress
-# (1) 添加Gazebo Fortress软件源
+# 添加Gazebo Fortress软件源
 RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
 
-# (2) 安装Ignition Fortress和相关依赖
+# 安装Ignition Fortress和相关依赖
 RUN apt-get update \
     && apt-get install -y ignition-fortress
 
-# (3) 安装ROS 2集成（ros-gz Bridge）
+# 安装ROS 2集成（ros-gz Bridge）
 RUN apt-get install -y ros-humble-ros-gz
 
-# (4) 安装ign_ros2_control软件包
+# 安装ign_ros2_control软件包
 RUN apt-get update \
-    && apt-get install -y ros-humble-ign-ros2-control
+    && apt-get install -y ros-humble-ign-ros2-control ros-humble-moveit-visual-tools
+
+RUN apt-get update \
+    && apt-get install -y ros-humble-ros2-control ros-humble-ros2-controllers ros-humble-gz-ros2-control
+    
+RUN apt-get update \
+    && apt-get install -y libssl-dev libusb-1.0-0-dev libudev-dev pkg-config libgtk-3-dev
+
+RUN apt-get update \
+    && apt-get install -y libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev at v4l-utils usbutils ros-humble-realsense2-camera
+
+RUN mkdir -p lib \
+    && cd lib \ 
+    && git clone https://github.com/realsenseai/librealsense.git \
+    && cd librealsense \
+    && ./scripts/setup_udev_rules.sh \
+    && mkdir build && cd build \
+    && cmake -DFORCE_RSUSB_BACKEND=true ../ -DBUILD_EXAMPLES=true \
+    && sudo make uninstall && make clean && make -j$(($(nproc)-1)) && sudo make install
+
+# 安装八叉树地图
+RUN apt-get update \
+    && apt-get install -y ros-humble-octomap-server ros-humble-octomap-rviz-plugins
 
 # 清理apt缓存以减少镜像大小
 RUN apt-get clean \

@@ -1,0 +1,31 @@
+/**:
+  ros__parameters:
+    # --- 核心设置：高清还原必开 ---
+    align_depth.enable: true      # 必须开启！将深度图对齐到彩色图，否则点云颜色会错位
+    enable_sync: true             # 开启同步，确保颜色和深度帧时间戳一致
+    pointcloud.enable: true       # 直接输出点云
+    pointcloud.ordered_pc: true   # 生成有序点云，方便后续处理
+
+    # --- 分辨率优化 ---
+    # 848x480 是 D435i 的最佳深度精度分辨率
+    depth_module.profile: 848x480x30
+    rgb_camera.profile: 848x480x30
+
+    # --- IMU 设置：用于稳定建模 ---
+    enable_accel: true
+    enable_gyro: true
+    gyro_fps: 200
+    accel_fps: 100
+    unite_imu_method: 2           # 2 代表 copy，将加速度和角速度合成一个 Imu 消息
+
+    # --- 滤镜设置：去除噪点，平滑表面 ---
+    # 顺序很重要：decimation(降采样) -> spatial(空间滤波) -> temporal(时间滤波) -> hole_filling(填洞)
+    filters: "decimation,spatial,temporal,hole_filling"
+    
+    # 填洞滤波：对于反光的绝缘子非常有效
+    hole_filling_filter.holes_fill: 1 # 填充周围 8 个像素的空洞
+    
+    # 空间滤波：平滑物体表面
+    spatial_filter.filter_magnitude: 2
+    spatial_filter.filter_smooth_alpha: 0.5
+    spatial_filter.filter_smooth_delta: 20

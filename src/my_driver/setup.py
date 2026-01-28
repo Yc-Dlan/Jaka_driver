@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 import os
 from glob import glob
 
-package_name = 'teleop_driver'
+package_name = 'my_driver'
 
 setup(
     name=package_name,
@@ -12,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         ((os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))))
     ],
     install_requires=['setuptools'],
@@ -20,10 +21,14 @@ setup(
     maintainer_email='yc-dlan@todo.todo',
     description='TODO: Package description',
     license='TODO: License declaration',
-    tests_require=['pytest'],
+    extras_require={
+        'test': [
+            'pytest',
+        ],
+    },
     entry_points={
         'console_scripts': [
-            'logitech_control = teleop_driver.logitech_control:main'
+            'octomap_test = my_driver.octomap_test:main'
         ],
     },
 )

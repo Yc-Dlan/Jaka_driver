@@ -33,6 +33,9 @@ find_package(Eigen3 REQUIRED)
 add_executable(moveit_server src/moveit_server.cpp)
 add_executable(moveit_test src/moveit_test.cpp)
 add_executable(jaka_test src/jaka_test.cpp)
+add_executable(hybrid_test src/hybrid_test.cpp)
+add_executable(hybrid_CBF_test src/hybrid_CBF_test.cpp)
+
 
 # Link libraries
 ament_target_dependencies(moveit_server
@@ -72,6 +75,36 @@ ament_target_dependencies(jaka_test
   tf2_eigen 
   Eigen3    
 )
+ament_target_dependencies(hybrid_test
+  rclcpp
+  std_msgs
+  geometry_msgs
+  sensor_msgs
+  jaka_msgs
+  moveit_msgs
+  action_msgs
+  moveit_ros_planning_interface
+  moveit_visual_tools
+  moveit_core
+  tf2_eigen 
+  Eigen3    
+  trajectory_msgs
+)
+ament_target_dependencies(hybrid_CBF_test
+  rclcpp
+  std_msgs
+  geometry_msgs
+  sensor_msgs
+  jaka_msgs
+  moveit_msgs
+  action_msgs
+  moveit_ros_planning_interface
+  moveit_visual_tools
+  moveit_core
+  tf2_eigen 
+  Eigen3    
+  trajectory_msgs
+)
 
 # include_directories(
 #   include
@@ -90,6 +123,20 @@ target_link_libraries(moveit_test
 )
 
 target_link_libraries(jaka_test
+  ${moveit_msgs_LIBRARIES}
+  ${moveit_ros_planning_interface_LIBRARIES}
+  ${moveit_core_LIBRARIES}
+  ${moveit_visual_tools_LIBRARIES}
+)
+
+target_link_libraries(hybrid_test
+  ${moveit_msgs_LIBRARIES}
+  ${moveit_ros_planning_interface_LIBRARIES}
+  ${moveit_core_LIBRARIES}
+  ${moveit_visual_tools_LIBRARIES}
+)
+
+target_link_libraries(hybrid_CBF_test
   ${moveit_msgs_LIBRARIES}
   ${moveit_ros_planning_interface_LIBRARIES}
   ${moveit_core_LIBRARIES}
@@ -120,6 +167,24 @@ target_include_directories(jaka_test
     ${moveit_visual_tools_INCLUDE_DIRS}
 )
 
+target_include_directories(hybrid_test
+  PRIVATE
+    ${moveit_core_INCLUDE_DIRS}  # Include the moveit_core include directory
+    $ENV{HOME}/moveit-ros2/install/moveit_core/include
+    ${moveit_ros_planning_interface_INCLUDE_DIRS}
+    ${moveit_visual_tools_INCLUDE_DIRS}
+)
+
+target_include_directories(hybrid_CBF_test
+  PUBLIC
+    include
+  PRIVATE
+    ${moveit_core_INCLUDE_DIRS}  # Include the moveit_core include directory
+    $ENV{HOME}/moveit-ros2/install/moveit_core/include
+    ${moveit_ros_planning_interface_INCLUDE_DIRS}
+    ${moveit_visual_tools_INCLUDE_DIRS}
+)
+
 # Specify where to find external libraries
 set(LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
@@ -130,12 +195,16 @@ link_directories(${LIBRARY_DIR})
 target_link_libraries(moveit_server ${LIBRARY_DIR}/libjakaAPI.so)
 target_link_libraries(moveit_test ${LIBRARY_DIR}/libjakaAPI.so)
 target_link_libraries(jaka_test ${LIBRARY_DIR}/libjakaAPI.so)
+target_link_libraries(hybrid_test ${LIBRARY_DIR}/libjakaAPI.so)
+target_link_libraries(hybrid_CBF_test ${LIBRARY_DIR}/libjakaAPI.so)
 
 # Install executables
 install(TARGETS
   moveit_server
   moveit_test
   jaka_test
+  hybrid_test
+  hybrid_CBF_test
   DESTINATION lib/${PROJECT_NAME}
 )
 
