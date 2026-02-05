@@ -8,6 +8,9 @@ ARG USER_GID=$USER_UID
 # 安装相关包
 ARG ROS_DISTRO=humble
 
+ENV CATKIN_WS="/home/$USERNAME/catkin_ws"
+ENV ROS_DISTRO_BASH="/opt/ros/humble/setup.bash" 
+
 RUN apt-get update \
     && apt-get install -y sudo vim nautilus curl lsb-release gnupg git wget cmake build-essential
 
@@ -55,6 +58,7 @@ RUN apt-get update \
 RUN apt-get update \
     && apt-get install -y libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev at v4l-utils usbutils ros-humble-realsense2-camera
 
+# 安装D435i相机驱动
 RUN mkdir -p lib \
     && cd lib \ 
     && git clone https://github.com/realsenseai/librealsense.git \
@@ -63,6 +67,25 @@ RUN mkdir -p lib \
     && mkdir build && cd build \
     && cmake -DFORCE_RSUSB_BACKEND=true ../ -DBUILD_EXAMPLES=true \
     && sudo make uninstall && make clean && make -j$(($(nproc)-1)) && sudo make install
+
+# 创建并初始化 catkin 工作空间
+RUN mkdir -p $CATKIN_WS/src && \
+    /bin/bash -c "source $ROS_DISTRO_BASH && cd $CATKIN_WS && colcon build"
+
+# 添加到 bashrc
+RUN echo "source $ROS_DISTRO_BASH" >> ~/.bashrc && \
+    echo "source $CATKIN_WS/devel/setup.bash" >> ~/.bashrc
+
+# 安装 Livox SDK 和驱动
+RUN mkdir -p ~/packages && cd ~/packages && \
+    # 安装 Livox SDK2 (第二代)
+    cd ~/packages && \
+    git clone https://github.com/Livox-SDK/Livox-SDK2.git && \
+    cd Livox-SDK2 && mkdir -p build && cd build && \
+    cmake .. && make -j$(nproc) && sudo make install && \
+    # 安装 livox_ros_driver2
+    git clone https://github.com/Livox-SDK/livox_ros_driver2.git $CATKIN_WS/src/livox_ros_driver2 && \
+    /bin/bash -c "source $ROS_DISTRO_BASH && cd $CATKIN_WS/src/livox_ros_driver2 && ./build.sh humble" 
 
 # 安装八叉树地图
 RUN apt-get update \
