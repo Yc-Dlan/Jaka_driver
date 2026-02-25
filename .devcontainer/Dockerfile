@@ -107,6 +107,9 @@ RUN curl -L https://github.com/oh-my-fish/oh-my-fish/raw/master/bin/install | te
 # 复制fish配置
 COPY packages/fish /home/${USERNAME}/.config/fish
 
+# 替换 jaka_ros2 启动文件
+COPY ./launches.py /opt/ros/humble/lib/python3.10/site-packages/moveit_configs_utils/launches.py
+
 WORKDIR /home/${USERNAME}
 
 CMD [ "/bin/bash" ]
