@@ -12,7 +12,7 @@ ENV CATKIN_WS="/home/$USERNAME/catkin_ws"
 ENV ROS_DISTRO_BASH="/opt/ros/humble/setup.bash" 
 
 RUN apt-get update \
-    && apt-get install -y sudo vim nautilus curl lsb-release gnupg git wget cmake build-essential
+    && apt-get install -y sudo vim nautilus curl lsb-release gnupg git wget cmake build-essential pip
 
 # 创建用户组和用户
 RUN groupadd --gid $USER_GID $USERNAME \
@@ -28,6 +28,17 @@ RUN groupadd --gid $USER_GID $USERNAME \
     && chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
 
 USER root
+
+# 安装可视化工具PYQT5
+RUN pip install PyQt5 pyqtgraph
+
+# 安装中文字体
+RUN apt-get update && apt-get install -y \
+    locales \
+    fonts-wqy-microhei \
+    fonts-wqy-zenhei \
+    && locale-gen zh_CN.UTF-8 \
+    && update-locale LANG=zh_CN.UTF-8
 
 # 安装MoveIt 2
 RUN apt-get update \
