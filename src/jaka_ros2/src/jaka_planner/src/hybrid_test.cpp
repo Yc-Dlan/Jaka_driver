@@ -1,5 +1,3 @@
-
-
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
