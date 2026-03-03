@@ -1,7 +1,7 @@
 import sys
 import rclpy
 from std_msgs.msg import String, Float64, Bool
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import JointState, Image
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QSlider, 
                              QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
@@ -9,6 +9,9 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import pyqtgraph as pg
 import subprocess
+import cv2
+from cv_bridge import CvBridge
+from PyQt5.QtGui import QImage, QPixmap
 
 # ==========================================
 # 1. ROS 2 工作线程 (使用组合模式代替多重继承)
@@ -19,6 +22,7 @@ class Ros2Thread(QThread):
     distance_signal = pyqtSignal(float)
     cbf_warning_signal = pyqtSignal(bool)
     joint_states_signal = pyqtSignal(list)
+    image_signal = pyqtSignal(object)  # 新增信号，传递OpenCV图像
 
     def __init__(self):
         super().__init__() 
@@ -30,10 +34,14 @@ class Ros2Thread(QThread):
         self.dist_sub = self.node.create_subscription(Float64, '/cbf/min_distance', self.dist_cb, 10)
         # [订阅者] 订阅机械臂关节状态
         self.joint_sub = self.node.create_subscription(JointState, '/joint_states', self.joint_cb, 10)
+        # [订阅者] 订阅图像数据
+        self.image_sub = self.node.create_subscription(Image, '/camera/color/image_raw', self.image_cb, 10)
         
         # [发布者] 急停开关 & 参数调节
         self.estop_pub = self.node.create_publisher(Bool, '/estop_cmd', 10)
         self.gamma_pub = self.node.create_publisher(Float64, '/cbf/gamma_param', 10)
+
+        self.bridge = CvBridge()
 
     def dist_cb(self, msg):
         self.distance_signal.emit(msg.data)
@@ -47,6 +55,13 @@ class Ros2Thread(QThread):
         # 假设前6个是 JAKA 的关节
         if len(msg.position) >= 6:
             self.joint_states_signal.emit(list(msg.position[:6]))
+
+    def image_cb(self, msg):
+        try:
+            cv_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            self.image_signal.emit(cv_img)
+        except Exception as e:
+            self.log_signal.emit(f"[ERROR] 图像转换失败: {e}")
 
     def run(self):
         self.log_signal.emit("[INFO] ROS 2 GUI 节点已启动，等待数据...")
@@ -218,6 +233,7 @@ class JakaGCSWindow(QMainWindow):
         self.ros_thread.distance_signal.connect(self.update_distance_plot)
         self.ros_thread.cbf_warning_signal.connect(self.update_cbf_warning)
         self.ros_thread.joint_states_signal.connect(self.update_joint_states)
+        self.ros_thread.image_signal.connect(self.update_camera_image)  # 新增连接
         
         self.ros_thread.start() 
 
@@ -262,6 +278,15 @@ class JakaGCSWindow(QMainWindow):
         for i, j_val in enumerate(joints):
             if i < 6:
                 self.joint_displays[i].setText(f"{j_val:+.2f}")
+
+    def update_camera_image(self, cv_img):
+        # OpenCV BGR -> RGB
+        rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_img.shape
+        bytes_per_line = ch * w
+        qt_img = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_img).scaled(self.lbl_camera.width(), self.lbl_camera.height(), Qt.KeepAspectRatio)
+        self.lbl_camera.setPixmap(pixmap)
 
     def closeEvent(self, event):
         self.ros_thread.stop()
