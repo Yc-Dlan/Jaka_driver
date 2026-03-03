@@ -1,5 +1,5 @@
-align_depth.enable: true      # 必须开启！将深度图对齐到彩色图，否则点云颜色会错位
-enable_sync: true             # 开启同步，确保颜色和深度帧时间戳一致
+align_depth.enable: true      # 深度图对齐到彩色图
+enable_sync: true             # 同步颜色和深度帧
 pointcloud.enable: true       # 直接输出点云
 pointcloud.ordered_pc: true   # 生成有序点云，方便后续处理
 
