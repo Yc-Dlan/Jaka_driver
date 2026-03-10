@@ -22,6 +22,8 @@ find_package(action_msgs REQUIRED)
 find_package(control_msgs REQUIRED)
 
 # Optionally find additional dependencies
+find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 # find_package(Boost REQUIRED)
 
 # Declare ROS 2 message and service dependencies
@@ -83,6 +85,8 @@ ament_target_dependencies(jaka_test_R
   # moveit_msgs
   action_msgs
   control_msgs
+  tf2 
+  tf2_geometry_msgs
 )
 ament_target_dependencies(jaka_hybrid_R
   rclcpp
@@ -93,6 +97,8 @@ ament_target_dependencies(jaka_hybrid_R
   # moveit_msgs
   action_msgs
   control_msgs
+  tf2 
+  tf2_geometry_msgs
 )
 
 # For including directories in ROS 2
