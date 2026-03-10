@@ -49,8 +49,8 @@ def generate_launch_description():
 
         Node(
             package=cpp_pkg_name,
-            executable='hybrid_test', 
-            name='hybrid_test',
+            executable='hybrid_CBF_test', 
+            name='hybrid_CBF_test',
             output='screen',
             parameters=[
                 moveit_config.robot_description,
