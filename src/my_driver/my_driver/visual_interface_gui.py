@@ -4,15 +4,74 @@ import cv2
 import rclpy
 from std_msgs.msg import String, Float64, Bool
 from sensor_msgs.msg import JointState, Image
-from geometry_msgs.msg import PoseStamped  # 新增：订阅位姿话题
+from geometry_msgs.msg import PoseStamped  
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QSlider, 
                              QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
-                             QLineEdit, QGridLayout)
+                             QLineEdit, QGridLayout, QDialog, QFormLayout, QMessageBox) # 新增了 QDialog, QFormLayout, QMessageBox
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QProcess
 import pyqtgraph as pg
 from cv_bridge import CvBridge
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtGui import QImage, QPixmap, QFont
+
+# ==========================================
+# 0. 登录验证界面 (Login Dialog)
+# ==========================================
+class LoginWindow(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("系统安全认证 - JAKA GCS")
+        self.resize(350, 200)
+        
+        # 禁用右上角的问号提示按钮
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        layout = QVBoxLayout(self)
+        
+        # 标题
+        lbl_title = QLabel("JAKA 沉浸式遥操作地面站")
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setFont(QFont("Arial", 14, QFont.Bold))
+        lbl_title.setStyleSheet("color: #2c3e50; margin-bottom: 15px;")
+        layout.addWidget(lbl_title)
+
+        # 表单布局 (账号密码输入)
+        form_layout = QFormLayout()
+        self.user_input = QLineEdit()
+        self.user_input.setPlaceholderText("请输入管理员账号")
+        
+        self.pass_input = QLineEdit()
+        self.pass_input.setPlaceholderText("请输入密码")
+        self.pass_input.setEchoMode(QLineEdit.Password) # 密码隐藏为黑点
+        
+        # 支持回车直接登录
+        self.user_input.returnPressed.connect(self.check_login)
+        self.pass_input.returnPressed.connect(self.check_login)
+
+        form_layout.addRow("👤 账号:", self.user_input)
+        form_layout.addRow("🔑 密码:", self.pass_input)
+        layout.addLayout(form_layout)
+
+        # 登录按钮
+        self.btn_login = QPushButton("登  录 (Login)")
+        self.btn_login.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; font-size: 14px; padding: 8px;")
+        self.btn_login.clicked.connect(self.check_login)
+        layout.addWidget(self.btn_login)
+
+    def check_login(self):
+        # ★ 在这里设置你的账号和密码 ★
+        valid_user = "admin"
+        valid_pass = "123456"
+
+        if self.user_input.text() == valid_user and self.pass_input.text() == valid_pass:
+            # 验证通过，关闭对话框并返回 Accepted 信号
+            self.accept()
+        else:
+            # 验证失败，弹出警告并清空密码框
+            QMessageBox.warning(self, "认证失败", "账号或密码错误，请重新输入！", QMessageBox.Ok)
+            self.pass_input.clear()
+            self.pass_input.setFocus()
+
 
 # ==========================================
 # 1. ROS 2 工作线程 (轻装上阵的订阅模式)
@@ -23,7 +82,7 @@ class Ros2Thread(QThread):
     cbf_warning_signal = pyqtSignal(bool)
     joint_states_signal = pyqtSignal(list)
     image_signal = pyqtSignal(object)
-    pose_signal = pyqtSignal(list)  # 用于发送笛卡尔位姿给主界面
+    pose_signal = pyqtSignal(list)  
 
     def __init__(self):
         super().__init__() 
@@ -33,8 +92,6 @@ class Ros2Thread(QThread):
         self.dist_sub = self.node.create_subscription(Float64, '/cbf/min_distance', self.dist_cb, 10)
         self.joint_sub = self.node.create_subscription(JointState, '/joint_states', self.joint_cb, 10)
         self.image_sub = self.node.create_subscription(Image, '/camera/color/image_raw', self.image_cb, 10)
-        
-        # ★ 新增：直接订阅后台节点发出的 TCP Pose ★
         self.pose_sub = self.node.create_subscription(PoseStamped, '/tcp_pose', self.pose_cb, 10)
         
         # [发布者] 
@@ -44,7 +101,6 @@ class Ros2Thread(QThread):
         self.bridge = CvBridge()
         self._is_running = True
 
-    # ★ 解析位姿并转为欧拉角 ★
     def pose_cb(self, msg):
         x = msg.pose.position.x
         y = msg.pose.position.y
@@ -68,7 +124,6 @@ class Ros2Thread(QThread):
         t4 = +1.0 - 2.0 * (qy * qy + qz * qz)
         rz = math.atan2(t3, t4)
         
-        # 发送给 GUI
         self.pose_signal.emit([x, y, z, rx, ry, rz])
 
     def dist_cb(self, msg):
@@ -388,11 +443,24 @@ class JakaGCSWindow(QMainWindow):
 # 3. 全局入口
 # ==========================================
 if __name__ == '__main__':
+    # 1. 优先初始化 ROS 2
     rclpy.init(args=sys.argv)
     app = QApplication(sys.argv)
-    window = JakaGCSWindow()
-    window.show()
-    exit_code = app.exec_()
+    
+    # 2. 实例化并弹出登录界面 (阻塞)
+    login_dialog = LoginWindow()
+    
+    # 3. 判断登录结果
+    if login_dialog.exec_() == QDialog.Accepted:
+        # 如果密码正确，才加载主控界面
+        window = JakaGCSWindow()
+        window.show()
+        exit_code = app.exec_()
+    else:
+        # 如果点击右上角关闭或者验证失败退出，直接结束程序
+        exit_code = 0
+
+    # 4. 退出清理
     if rclpy.ok():
         rclpy.shutdown()
     sys.exit(exit_code)
