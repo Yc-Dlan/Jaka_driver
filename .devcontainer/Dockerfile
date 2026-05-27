@@ -58,7 +58,7 @@ RUN apt-get install -y ros-humble-ros-gz
 
 # 安装ign_ros2_control软件包
 RUN apt-get update \
-    && apt-get install -y ros-humble-ign-ros2-control ros-humble-moveit-visual-tools
+    && apt-get install -y ros-humble-ign-ros2-control ros-humble-moveit-visual-tools ros-humble-ros-gz-bridge ros-humble-ros-gz-sim ros-humble-ign-ros2-control
 
 RUN apt-get update \
     && apt-get install -y ros-humble-ros2-control ros-humble-ros2-controllers ros-humble-gz-ros2-control

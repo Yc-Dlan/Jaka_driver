@@ -1,10 +1,10 @@
 # MoveIt uses this configuration for controller management
-
 moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
 
 moveit_simple_controller_manager:
   controller_names:
     - jaka_zu20_controller
+    - robotiq_gripper_controller  # 【新增】将夹爪控制器注册到 MoveIt 列表
 
   jaka_zu20_controller:
     type: FollowJointTrajectory
@@ -17,6 +17,14 @@ moveit_simple_controller_manager:
       - joint_4
       - joint_5
       - joint_6
+
+  # 【新增】告诉 MoveIt 如何向夹爪发送轨迹指令
+  robotiq_gripper_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - robotiq_85_left_knuckle_joint
 
 trajectory_execution:
   allowed_execution_duration_scaling: 1.5     # or 2.0, to allow 50-100% extra time

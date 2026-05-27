@@ -1,3 +1,8 @@
+# Copyright (c) 2026.
+# Project: 面向配电网运维作业的遥操作系统 V1.0
+# Description: Teleop Ground Control Station GUI Node
+# Author: Chen Cheng
+
 import sys
 import math
 import cv2
@@ -8,74 +13,62 @@ from geometry_msgs.msg import PoseStamped
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QSlider, 
                              QTextEdit, QGroupBox, QSpinBox, QDoubleSpinBox,
-                             QLineEdit, QGridLayout, QDialog, QFormLayout, QMessageBox) # 新增了 QDialog, QFormLayout, QMessageBox
+                             QLineEdit, QGridLayout, QDialog, QFormLayout, QMessageBox)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QProcess
 import pyqtgraph as pg
 from cv_bridge import CvBridge
 from PyQt5.QtGui import QImage, QPixmap, QFont
 
-# ==========================================
-# 0. 登录验证界面 (Login Dialog)
-# ==========================================
+# Login Dialog Module
 class LoginWindow(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("系统安全认证")
         self.resize(350, 200)
         
-        # 禁用右上角的问号提示按钮
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
         layout = QVBoxLayout(self)
         
-        # 标题
-        lbl_title = QLabel("面向配电网运维作业的机器人遥操作系统")
+        lbl_title = QLabel("面向配电网运维作业的遥操作系统")
         lbl_title.setAlignment(Qt.AlignCenter)
         lbl_title.setFont(QFont("Arial", 14, QFont.Bold))
         lbl_title.setStyleSheet("color: #2c3e50; margin-bottom: 15px;")
         layout.addWidget(lbl_title)
 
-        # 表单布局 (账号密码输入)
         form_layout = QFormLayout()
         self.user_input = QLineEdit()
         self.user_input.setPlaceholderText("请输入管理员账号")
         
         self.pass_input = QLineEdit()
         self.pass_input.setPlaceholderText("请输入密码")
-        self.pass_input.setEchoMode(QLineEdit.Password) # 密码隐藏为黑点
+        self.pass_input.setEchoMode(QLineEdit.Password) 
         
-        # 支持回车直接登录
         self.user_input.returnPressed.connect(self.check_login)
         self.pass_input.returnPressed.connect(self.check_login)
 
-        form_layout.addRow("👤 账号:", self.user_input)
-        form_layout.addRow("🔑 密码:", self.pass_input)
+        form_layout.addRow("账号:", self.user_input)
+        form_layout.addRow("密码:", self.pass_input)
         layout.addLayout(form_layout)
 
-        # 登录按钮
-        self.btn_login = QPushButton("登  录 (Login)")
+        self.btn_login = QPushButton("登 录 (Login)")
         self.btn_login.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; font-size: 14px; padding: 8px;")
         self.btn_login.clicked.connect(self.check_login)
         layout.addWidget(self.btn_login)
 
     def check_login(self):
-        # ★ 在这里设置你的账号和密码 ★
+        # Default authentication credentials
         valid_user = "admin"
         valid_pass = "123456"
 
         if self.user_input.text() == valid_user and self.pass_input.text() == valid_pass:
-            # 验证通过，关闭对话框并返回 Accepted 信号
             self.accept()
         else:
-            # 验证失败，弹出警告并清空密码框
-            QMessageBox.warning(self, "认证失败", "账号或密码错误，请重新输入！", QMessageBox.Ok)
+            QMessageBox.warning(self, "认证失败", "账号或密码错误，请重新输入", QMessageBox.Ok)
             self.pass_input.clear()
             self.pass_input.setFocus()
 
-
-# ==========================================
-# 1. ROS 2 工作线程 (轻装上阵的订阅模式)
-# ==========================================
+# ROS 2 Worker Thread
 class Ros2Thread(QThread):
     log_signal = pyqtSignal(str)
     distance_signal = pyqtSignal(float)
@@ -88,13 +81,11 @@ class Ros2Thread(QThread):
         super().__init__() 
         self.node = rclpy.create_node('jaka_gcs_gui_node')
         
-        # [订阅者] 
         self.dist_sub = self.node.create_subscription(Float64, '/cbf/min_distance', self.dist_cb, 10)
         self.joint_sub = self.node.create_subscription(JointState, '/joint_states', self.joint_cb, 10)
         self.image_sub = self.node.create_subscription(Image, '/camera/color/image_raw', self.image_cb, 10)
         self.pose_sub = self.node.create_subscription(PoseStamped, '/tcp_pose', self.pose_cb, 10)
         
-        # [发布者] 
         self.estop_pub = self.node.create_publisher(Bool, '/estop_cmd', 10)
         self.gamma_pub = self.node.create_publisher(Float64, '/cbf/gamma_param', 10)
 
@@ -142,24 +133,21 @@ class Ros2Thread(QThread):
             cv_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
             self.image_signal.emit(cv_img)
         except Exception as e:
-            self.log_signal.emit(f"[ERROR] 图像转换失败: {e}")
+            self.log_signal.emit(f"[ERROR] Image conversion failed: {e}")
 
     def run(self):
-        self.log_signal.emit("[INFO] ROS 2 GUI 节点已启动，正在等待 /tcp_pose 数据...")
+        self.log_signal.emit("[INFO] ROS 2 GUI node started, waiting for /tcp_pose data...")
         while rclpy.ok() and self._is_running:
             rclpy.spin_once(self.node, timeout_sec=0.05)
 
     def stop(self):
-        self.log_signal.emit("[WARN] 正在安全切断 ROS 2 内部订阅节点...")
+        self.log_signal.emit("[WARN] Shutting down ROS 2 internal node...")
         self._is_running = False  
         self.wait()               
         if self.node:
             self.node.destroy_node()
 
-
-# ==========================================
-# 2. PyQt5 主界面 
-# ==========================================
+# Main GUI Window
 class JakaGCSWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -175,7 +163,7 @@ class JakaGCSWindow(QMainWindow):
         self.init_ros_thread()
 
     def init_ui(self):
-        # --- 模块 1: 核心控制 ---
+        # Module 1: Core Control
         group1 = QGroupBox("1. 核心控制与急停 (Node & E-Stop)")
         layout1 = QHBoxLayout()
         
@@ -192,7 +180,7 @@ class JakaGCSWindow(QMainWindow):
         layout1.addWidget(self.btn_estop)
         group1.setLayout(layout1)
 
-        # --- 模块 2: CBF 仪表盘 ---
+        # Module 2: CBF Dashboard
         group2 = QGroupBox("2. CBF 主动安全仪表盘 (CBF Dashboard)")
         layout2 = QVBoxLayout()
         
@@ -219,11 +207,11 @@ class JakaGCSWindow(QMainWindow):
         layout2.addLayout(h_layout2)
         group2.setLayout(layout2)
 
-        # --- 模块 3: 视觉监控 ---
+        # Module 3: Vision & Mapping
         group3 = QGroupBox("3. 视觉与建图 (Vision & Mapping)")
         layout3 = QVBoxLayout()
         
-        self.btn_rviz = QPushButton("🚀 启动 RViz2 3D 监控视角")
+        self.btn_rviz = QPushButton("启动 RViz2 3D 监控视角")
         self.btn_rviz.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; font-size: 14px; padding: 10px;")
         self.btn_rviz.clicked.connect(self.launch_rviz)
         layout3.addWidget(self.btn_rviz)
@@ -234,12 +222,12 @@ class JakaGCSWindow(QMainWindow):
         self.lbl_camera.setMinimumHeight(150)
         
         self.btn_clear_map = QPushButton("清除 OctoMap 缓存")
-        self.btn_clear_map.clicked.connect(lambda: self.log_msg("[INFO] 发送清除地图请求..."))
+        self.btn_clear_map.clicked.connect(lambda: self.log_msg("[INFO] Request map cache clear..."))
         layout3.addWidget(self.lbl_camera)
         layout3.addWidget(self.btn_clear_map)
         group3.setLayout(layout3)
 
-        # --- 模块 4: 机械臂状态 ---
+        # Module 4: Kinematics & Pose
         group4 = QGroupBox("4. 机械臂实时状态 (Kinematics & Pose)")
         layout4 = QVBoxLayout()
         
@@ -291,7 +279,7 @@ class JakaGCSWindow(QMainWindow):
         layout4.addLayout(h_sens_layout)
         group4.setLayout(layout4)
 
-        # --- 模块 5: 日志控制台 ---
+        # Module 5: ROS 2 Logs
         group5 = QGroupBox("5. 系统日志控制台 (ROS 2 Logs)")
         layout5 = QVBoxLayout()
         self.txt_log = QTextEdit()
@@ -300,7 +288,6 @@ class JakaGCSWindow(QMainWindow):
         layout5.addWidget(self.txt_log)
         group5.setLayout(layout5)
 
-        # --- 组装主布局 ---
         h_layout_2_3 = QHBoxLayout()
         h_layout_2_3.addWidget(group2, 1) 
         h_layout_2_3.addWidget(group3, 1) 
@@ -327,9 +314,7 @@ class JakaGCSWindow(QMainWindow):
         self.ros_thread.pose_signal.connect(self.update_pose_displays) 
         self.ros_thread.start() 
 
-    # ==========================================
-    # ★ 核心槽函数实现 ★
-    # ==========================================
+    # Core slot implementations
     def log_msg(self, msg):
         self.txt_log.append(msg)
         scrollbar = self.txt_log.verticalScrollBar()
@@ -337,12 +322,12 @@ class JakaGCSWindow(QMainWindow):
 
     def launch_teleop(self):
         if self.launch_process.state() == QProcess.NotRunning:
-            self.log_msg("[CMD] 正在启动遥操作节点: ros2 launch teleop_driver teleop_hybrid.launch.py")
+            self.log_msg("[CMD] Launching teleop node: ros2 launch teleop_driver teleop_hybrid.launch.py")
             self.launch_process.start("ros2", ["launch", "teleop_driver", "teleop_hybrid.launch.py"])
             self.btn_launch.setText("停止遥操作 (Stop)")
             self.btn_launch.setStyleSheet("background-color: #ff9800; color: white; font-weight: bold; font-size: 14px;")
         else:
-            self.log_msg("[CMD] 正在发送中止信号给遥操作节点...")
+            self.log_msg("[CMD] Sending terminate signal to teleop node...")
             self.launch_process.terminate() 
             self.launch_process.waitForFinished(2000) 
             if self.launch_process.state() != QProcess.NotRunning:
@@ -350,15 +335,15 @@ class JakaGCSWindow(QMainWindow):
 
     def launch_rviz(self):
         if self.rviz_process.state() == QProcess.NotRunning:
-            self.log_msg("[CMD] 正在唤醒独立的 RViz2 3D 监控引擎...")
+            self.log_msg("[CMD] Launching RViz2 3D visualizer...")
             self.rviz_process.start("rviz2", []) 
             self.btn_rviz.setText("关闭 RViz2 监控")
             self.btn_rviz.setStyleSheet("background-color: #607D8B; color: white; font-weight: bold; font-size: 14px; padding: 10px;")
         else:
-            self.log_msg("[CMD] 正在关闭 RViz2...")
+            self.log_msg("[CMD] Terminating RViz2...")
             self.rviz_process.kill()
             self.rviz_process.waitForFinished(1000)
-            self.btn_rviz.setText("🚀 启动 RViz2 3D 监控视角")
+            self.btn_rviz.setText("启动 RViz2 3D 监控视角")
             self.btn_rviz.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; font-size: 14px; padding: 10px;")
 
     def handle_stdout(self):
@@ -377,10 +362,10 @@ class JakaGCSWindow(QMainWindow):
         if state == QProcess.NotRunning:
             self.btn_launch.setText("启动遥操作 (Launch)")
             self.btn_launch.setStyleSheet("font-weight: bold; font-size: 14px;")
-            self.log_msg("[INFO] 遥操作节点已完全退出。")
+            self.log_msg("[INFO] Teleop node exited.")
 
     def trigger_estop(self):
-        self.log_msg("[ERROR] 触发急停！立即下发停止指令！")
+        self.log_msg("[ERROR] E-STOP triggered. Sending stop command.")
         msg = Bool()
         msg.data = True
         self.ros_thread.estop_pub.publish(msg)
@@ -391,7 +376,7 @@ class JakaGCSWindow(QMainWindow):
 
     def update_cbf_warning(self, is_warning):
         if is_warning:
-            self.lbl_warning.setText("安全状态: CBF 介入中！")
+            self.lbl_warning.setText("安全状态: CBF 介入中")
             self.lbl_warning.setStyleSheet("color: red; font-weight: bold; font-size: 14px;")
             self.plot_curve.setPen(pg.mkPen(color='r', width=2)) 
         else:
@@ -405,7 +390,7 @@ class JakaGCSWindow(QMainWindow):
         msg = Float64()
         msg.data = val
         self.ros_thread.gamma_pub.publish(msg)
-        self.log_msg(f"[INFO] 更新 CBF Gamma 参数为: {val:.1f}")
+        self.log_msg(f"[INFO] Update CBF Gamma param: {val:.1f}")
 
     def update_joint_states(self, joints):
         for i, j_val in enumerate(joints):
@@ -428,7 +413,7 @@ class JakaGCSWindow(QMainWindow):
 
     def closeEvent(self, event):
         if hasattr(self, 'launch_process') and self.launch_process.state() != QProcess.NotRunning:
-            self.log_msg("[WARN] 正在强制结束后台 launch 进程...")
+            self.log_msg("[WARN] Killing background launch process...")
             self.launch_process.kill()
             self.launch_process.waitForFinished(1000)
             
@@ -439,28 +424,20 @@ class JakaGCSWindow(QMainWindow):
         self.ros_thread.stop()
         event.accept()
 
-# ==========================================
-# 3. 全局入口
-# ==========================================
+# Main Entry
 if __name__ == '__main__':
-    # 1. 优先初始化 ROS 2
     rclpy.init(args=sys.argv)
     app = QApplication(sys.argv)
     
-    # 2. 实例化并弹出登录界面 (阻塞)
     login_dialog = LoginWindow()
     
-    # 3. 判断登录结果
     if login_dialog.exec_() == QDialog.Accepted:
-        # 如果密码正确，才加载主控界面
         window = JakaGCSWindow()
         window.show()
         exit_code = app.exec_()
     else:
-        # 如果点击右上角关闭或者验证失败退出，直接结束程序
         exit_code = 0
 
-    # 4. 退出清理
     if rclpy.ok():
         rclpy.shutdown()
     sys.exit(exit_code)
