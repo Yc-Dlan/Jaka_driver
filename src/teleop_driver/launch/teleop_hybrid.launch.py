@@ -60,11 +60,11 @@ def generate_launch_description():
             ]
         ),
 
-        Node(
-            package=py_pkg_name,
-            executable='tcp_tf', 
-            name='tcp_tf',
-            output='screen',
-            parameters=[{'use_sim_time': use_sim_time}]
-        )
+        #Node(
+        #    package=py_pkg_name,
+        #    executable='tcp_tf', 
+        #    name='tcp_tf',
+        #    output='screen',
+        #    parameters=[{'use_sim_time': use_sim_time}]
+        #)
     ])
