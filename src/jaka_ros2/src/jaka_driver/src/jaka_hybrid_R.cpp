@@ -34,7 +34,9 @@ public:
             [this](const geometry_msgs::msg::Twist::SharedPtr msg){ 
                 std::lock_guard<std::mutex> lock(data_mutex_);
                 latest_twist_ = *msg;
-                last_cmd_time_ = this->now(); // 刷新活跃时间
+                // 切入笛卡尔模式时，强制清零关节指令缓存
+                std::fill(latest_joint_vels_.begin(), latest_joint_vels_.end(), 0.0);
+                last_cmd_time_ = this->now(); 
                 mode_ = CARTESIAN; 
             });
 
@@ -43,7 +45,9 @@ public:
             [this](const std_msgs::msg::Float64MultiArray::SharedPtr msg){
                 std::lock_guard<std::mutex> lock(data_mutex_);
                 if(msg->data.size() == 6) latest_joint_vels_ = msg->data; 
-                last_cmd_time_ = this->now(); // 刷新活跃时间
+                // 切入关节模式时，强制清零笛卡尔指令缓存
+                latest_twist_ = geometry_msgs::msg::Twist(); 
+                last_cmd_time_ = this->now(); 
                 mode_ = JOINT_SINGLE;
             });
 
@@ -79,8 +83,8 @@ public:
             }
         });
 
-        // 5. 开启 50Hz 控制循环
-        timer_ = this->create_wall_timer(20ms, std::bind(&HybridServoRealNode::controlLoop, this));
+        // 5. 开启 125Hz 控制循环
+        timer_ = this->create_wall_timer(8ms, std::bind(&HybridServoRealNode::controlLoop, this));
     }
 
 private:
@@ -93,7 +97,7 @@ private:
     std::vector<double> current_rpy_;
     
     rclcpp::Time last_cmd_time_;
-    const double dt_ = 0.02; // 50Hz = 0.02s
+    const double dt_ = 0.008; // 125Hz(8ms)
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cart_sub_;
     rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr joint_sub_;
@@ -105,11 +109,14 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
 
     void controlLoop() {
-        // 1. 活跃状态检查 (0.5s 超时安全保护)
-        if ((this->now() - last_cmd_time_).seconds() > 0.5) {
+        if ((this->now() - last_cmd_time_).seconds() > 0.1) {
+            std::lock_guard<std::mutex> lock(data_mutex_);
             if (mode_ != IDLE) {
                 mode_ = IDLE;
-                RCLCPP_INFO(this->get_logger(), "⏸️ 摇杆已松开，停止下发增量...");
+                // 超时后必须强行把内部速度清零
+                latest_twist_ = geometry_msgs::msg::Twist();
+                std::fill(latest_joint_vels_.begin(), latest_joint_vels_.end(), 0.0);
+                RCLCPP_INFO(this->get_logger(), "⏸️ 安全键已松开(或无指令)，指令强制清零，停止下发...");
             }
             return;
         }
@@ -136,7 +143,6 @@ private:
             tf2::Vector3 vec_global = mat_rot * vec_local;
 
             // 3. 【极其重要】JAKA 底层伺服接口要求距离单位为 毫米(mm)！
-            // 我们的 vec_global 是 米(m)，必须乘以 1000
             double dx_mm = vec_global.x() * 1000.0;
             double dy_mm = vec_global.y() * 1000.0;
             double dz_mm = vec_global.z() * 1000.0;
@@ -155,8 +161,11 @@ private:
             req->pose.push_back(latest_twist_.angular.y * dt_);
             req->pose.push_back(latest_twist_.angular.z * dt_);
 
-            // 发送笛卡尔微增量给控制柜
-            servo_p_client_->async_send_request(req);
+            // 只有当有实际位移时才下发指令 (避免频繁发送纯0指令干扰底层伺服池)
+            if (std::abs(dx_mm) > 0.001 || std::abs(dy_mm) > 0.001 || std::abs(dz_mm) > 0.001 ||
+                std::abs(latest_twist_.angular.x) > 0.001 || std::abs(latest_twist_.angular.y) > 0.001 || std::abs(latest_twist_.angular.z) > 0.001) {
+                servo_p_client_->async_send_request(req);
+            }
         }
         else if (mode_ == JOINT_SINGLE) 
         {

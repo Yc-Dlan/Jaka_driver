@@ -8,7 +8,7 @@ from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
 
-    ip_arg = DeclareLaunchArgument('ip', default_value='192.168.x.x', description='JAKA Robot IP')
+    ip_arg = DeclareLaunchArgument('ip', default_value='192.168.1.11', description='JAKA Robot IP')
     ip_val = LaunchConfiguration('ip')
 
     jaka_driver_launch = IncludeLaunchDescription(

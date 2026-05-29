@@ -5,16 +5,19 @@ from std_msgs.msg import Float64MultiArray
 from geometry_msgs.msg import Twist
 import time
 
-MAX_LIN_VEL = 0.15   # 笛卡尔线速度: m/s
-MAX_ANG_VEL = 0.4    # 笛卡尔角速度: rad/s
-MAX_JOINT_VEL = 0.5  # 单关节角速度: rad/s
+#MAX_LIN_VEL = 0.15   # 笛卡尔线速度: m/s
+MAX_LIN_VEL = 0.05   # 笛卡尔线速度: m/s
+#MAX_ANG_VEL = 0.4    # 笛卡尔角速度: rad/s
+MAX_ANG_VEL = 0.05    # 笛卡尔角速度: rad/s
+#MAX_JOINT_VEL = 0.5  # 单关节角速度: rad/s
+MAX_JOINT_VEL = 0.1  # 单关节角速度: rad/s
 
 AXIS_X, AXIS_Y, AXIS_TWIST, AXIS_THROTTLE = 0, 1, 2, 3
 BTN_TRIGGER = 0
 BTN_DEADMAN = 1 # 安全键
 BTN_MODE = 2    # 模式切换
-BTN_PREV_J = 4  # [新] 上一个关节 (LB)
-BTN_NEXT_J = 5  # [新] 下一个关节 (RB)
+BTN_PREV_J = 4  # 上一个关节 (LB)
+BTN_NEXT_J = 5  # 下一个关节 (RB)
 
 class JakaManualTeleop(Node):
     def __init__(self):
@@ -45,7 +48,6 @@ class JakaManualTeleop(Node):
         val_y = msg.axes[AXIS_Y] if abs(msg.axes[AXIS_Y]) > 0.05 else 0.0
         val_twist = msg.axes[AXIS_TWIST] if abs(msg.axes[AXIS_TWIST]) > 0.1 else 0.0
 
-        # --- 3. 模式分发 ---
         if self.mode == "CARTESIAN":
             twist = Twist()
             if not msg.buttons[BTN_TRIGGER]:
@@ -59,7 +61,6 @@ class JakaManualTeleop(Node):
             self.cart_pub.publish(twist)
 
         elif self.mode == "JOINT_SINGLE":
-            # 构建 6维 速度向量
             joint_vels = [0.0] * 6
             
             joint_vels[self.active_joint_index] = val_y * MAX_JOINT_VEL * ratio
@@ -78,7 +79,7 @@ class JakaManualTeleop(Node):
             self.mode = "JOINT_SINGLE" if self.mode == "CARTESIAN" else "CARTESIAN"
             self.get_logger().info(f"🔄 切换模式: {self.mode}")
 
-        # 切换关节 (仅在关节模式下有效)
+        # 切换关节 
         if self.mode == "JOINT_SINGLE":
             if is_pressed(BTN_NEXT_J):
                 self.active_joint_index = (self.active_joint_index + 1) % 6

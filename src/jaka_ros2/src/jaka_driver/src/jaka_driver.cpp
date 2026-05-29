@@ -883,7 +883,7 @@ void get_conn_scoket_state(){
 		// if (ret)
         // {
         //     RCLCPP_ERROR(rclcpp::get_logger("get_conn_socket_state"), "get_robot_status error!!!");
-        // }
+        // }//robot.servo_move_use_joint_LPF(2);
         // else if(!robot_status.is_socket_connect)
 		// {
         //     RCLCPP_ERROR(rclcpp::get_logger("get_conn_socket_state"), "connect error!!!");
@@ -927,7 +927,7 @@ int main(int argc, char *argv[])
     robot.enable_robot();
     sleep(4);
     //Joint-space first-order low-pass filtering in robot servo mode
-    //robot.servo_move_use_joint_LPF(2);
+    robot.servo_move_use_joint_LPF(0.1);
     robot.servo_speed_foresight(15,0.03);
 
     //1.1 Linear motion (in customized user coordinate system)
