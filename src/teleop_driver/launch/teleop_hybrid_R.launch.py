@@ -19,7 +19,7 @@ def generate_launch_description():
     )
 
     delayed_teleop_nodes = TimerAction(
-        period=15.0,
+        period=5.0,
         actions=[
             Node(
                 package='joy',
@@ -39,8 +39,8 @@ def generate_launch_description():
             ),
             Node(
                 package='jaka_driver',
-                executable='jaka_hybrid_R', 
-                name='jaka_hybrid_R',
+                executable='jaka_hybrid_sdk', 
+                name='jaka_hybrid_sdk',
                 output='screen'
             )
         ]
@@ -48,6 +48,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         ip_arg,
-        jaka_driver_launch,
+        #jaka_driver_launch,
         delayed_teleop_nodes
     ])

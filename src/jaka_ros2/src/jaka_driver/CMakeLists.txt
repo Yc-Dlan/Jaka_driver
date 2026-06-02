@@ -31,14 +31,26 @@ find_package(rosidl_default_generators REQUIRED)
 
 # Declare executable targets
 add_executable(jaka_driver src/jaka_driver.cpp)
+add_executable(jaka_driver_R src/jaka_driver_R.cpp)
 add_executable(sdk_test src/sdk_test.cpp)
 add_executable(client src/client.cpp)
 add_executable(servoj_demo src/servoj_demo.cpp)
 add_executable(jaka_test_R src/jaka_test_R.cpp)
 add_executable(jaka_hybrid_R src/jaka_hybrid_R.cpp)
+add_executable(jaka_hybrid_sdk src/jaka_hybrid_sdk.cpp)
 
 # Link libraries
 ament_target_dependencies(jaka_driver
+  rclcpp
+  std_msgs
+  geometry_msgs
+  sensor_msgs
+  jaka_msgs
+  # moveit_msgs
+  action_msgs
+  control_msgs
+)
+ament_target_dependencies(jaka_driver_R
   rclcpp
   std_msgs
   geometry_msgs
@@ -100,9 +112,28 @@ ament_target_dependencies(jaka_hybrid_R
   tf2 
   tf2_geometry_msgs
 )
+ament_target_dependencies(jaka_hybrid_sdk
+  rclcpp
+  std_msgs
+  geometry_msgs
+  sensor_msgs
+  jaka_msgs
+  # moveit_msgs
+  action_msgs
+  control_msgs
+  tf2 
+  tf2_geometry_msgs
+)
 
 # For including directories in ROS 2
 target_include_directories(jaka_driver
+  PUBLIC
+    include
+  PRIVATE
+    ${ament_INCLUDE_DIRS}
+)
+
+target_include_directories(jaka_driver_R
   PUBLIC
     include
   PRIVATE
@@ -144,6 +175,12 @@ target_include_directories(jaka_hybrid_R
     ${ament_INCLUDE_DIRS}
 )
 
+target_include_directories(jaka_hybrid_sdk
+  PUBLIC
+    include
+  PRIVATE
+    ${ament_INCLUDE_DIRS}
+)
 
 # Specify where to find external libraries
 set(LIBRARY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib)
@@ -153,20 +190,24 @@ link_directories(${LIBRARY_DIR})
 
 # Find the library and link it properly
 target_link_libraries(jaka_driver ${LIBRARY_DIR}/libjakaAPI.so)
+target_link_libraries(jaka_driver_R ${LIBRARY_DIR}/libjakaAPI.so)
 target_link_libraries(sdk_test ${LIBRARY_DIR}/libjakaAPI.so)
 target_link_libraries(client ${LIBRARY_DIR}/libjakaAPI.so)
 target_link_libraries(servoj_demo ${LIBRARY_DIR}/libjakaAPI.so)
 target_link_libraries(jaka_test_R ${LIBRARY_DIR}/libjakaAPI.so)
 target_link_libraries(jaka_hybrid_R ${LIBRARY_DIR}/libjakaAPI.so)
+target_link_libraries(jaka_hybrid_sdk ${LIBRARY_DIR}/libjakaAPI.so)
 
 # Install executables
 install(TARGETS
   jaka_driver
+  jaka_driver_R
   sdk_test
   client
   servoj_demo
   jaka_test_R
   jaka_hybrid_R
+  jaka_hybrid_sdk
   DESTINATION lib/${PROJECT_NAME}
 )
 

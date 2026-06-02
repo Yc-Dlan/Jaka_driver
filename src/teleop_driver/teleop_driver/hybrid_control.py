@@ -3,13 +3,10 @@ from rclpy.node import Node
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Float64MultiArray
 from geometry_msgs.msg import Twist
-import time
+import collections
 
-#MAX_LIN_VEL = 0.15   # 笛卡尔线速度: m/s
 MAX_LIN_VEL = 0.05   # 笛卡尔线速度: m/s
-#MAX_ANG_VEL = 0.4    # 笛卡尔角速度: rad/s
-MAX_ANG_VEL = 0.05    # 笛卡尔角速度: rad/s
-#MAX_JOINT_VEL = 0.5  # 单关节角速度: rad/s
+MAX_ANG_VEL = 0.05   # 笛卡尔角速度: rad/s
 MAX_JOINT_VEL = 0.1  # 单关节角速度: rad/s
 
 AXIS_X, AXIS_Y, AXIS_TWIST, AXIS_THROTTLE = 0, 1, 2, 3
@@ -32,21 +29,35 @@ class JakaManualTeleop(Node):
         
         self.last_btns = {} 
         
+        # 滑动平均窗口，消除抖动
+        self.axes_history = collections.deque(maxlen=10)
+        
         self.get_logger().info("✅ 单关节/笛卡尔混合控制已启动")
         self.get_logger().info("🕹️  操作: [LB/RB]切换关节 | [Btn2]切换模式 | [Y轴]驱动")
 
     def joy_cb(self, msg):
-        if not msg.buttons[BTN_DEADMAN]: return
+        # 如果没有按下安全键，清空历史缓存并退出
+        if not msg.buttons[BTN_DEADMAN]: 
+            self.axes_history.clear()
+            return
 
         self.handle_buttons(msg)
+
+        # 存入原始摇杆数据
+        self.axes_history.append((msg.axes[AXIS_X], msg.axes[AXIS_Y], msg.axes[AXIS_TWIST]))
+        
+        # 计算滑动平均值 (低通滤波)
+        avg_x = sum(h[0] for h in self.axes_history) / len(self.axes_history)
+        avg_y = sum(h[1] for h in self.axes_history) / len(self.axes_history)
+        avg_twist = sum(h[2] for h in self.axes_history) / len(self.axes_history)
 
         # 速度倍率
         ratio = ((-msg.axes[AXIS_THROTTLE] + 1) / 2) * 0.8 + 0.2
         
         # 摇杆死区
-        val_x = msg.axes[AXIS_X] if abs(msg.axes[AXIS_X]) > 0.05 else 0.0
-        val_y = msg.axes[AXIS_Y] if abs(msg.axes[AXIS_Y]) > 0.05 else 0.0
-        val_twist = msg.axes[AXIS_TWIST] if abs(msg.axes[AXIS_TWIST]) > 0.1 else 0.0
+        val_x = avg_x if abs(avg_x) > 0.05 else 0.0
+        val_y = avg_y if abs(avg_y) > 0.05 else 0.0
+        val_twist = avg_twist if abs(avg_twist) > 0.1 else 0.0
 
         if self.mode == "CARTESIAN":
             twist = Twist()
@@ -62,7 +73,6 @@ class JakaManualTeleop(Node):
 
         elif self.mode == "JOINT_SINGLE":
             joint_vels = [0.0] * 6
-            
             joint_vels[self.active_joint_index] = val_y * MAX_JOINT_VEL * ratio
             
             cmd = Float64MultiArray()
@@ -70,7 +80,6 @@ class JakaManualTeleop(Node):
             self.joint_pub.publish(cmd)
 
     def handle_buttons(self, msg):
-
         def is_pressed(idx):
             return msg.buttons[idx] == 1 and self.last_btns.get(idx, 0) == 0
 
