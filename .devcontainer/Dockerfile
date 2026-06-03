@@ -106,6 +106,10 @@ RUN apt-get update \
 RUN apt-get update \
     && apt-get install -y ros-humble-aruco-ros
 
+# 安装可视化工具Foxglove Studio桥接
+RUN apt-get update \
+    && apt-get install -y ros-humble-foxglove-bridge
+
 # 清理apt缓存以减少镜像大小
 RUN apt-get clean \
     && rm -rf /var/lib/apt/lists/*
