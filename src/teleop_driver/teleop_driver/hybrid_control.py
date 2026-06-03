@@ -6,15 +6,15 @@ from geometry_msgs.msg import Twist
 import collections
 
 MAX_LIN_VEL = 0.05   # 笛卡尔线速度: m/s
-MAX_ANG_VEL = 0.05   # 笛卡尔角速度: rad/s
 MAX_JOINT_VEL = 0.1  # 单关节角速度: rad/s
 
 AXIS_X, AXIS_Y, AXIS_TWIST, AXIS_THROTTLE = 0, 1, 2, 3
-BTN_TRIGGER = 0
 BTN_DEADMAN = 1 # 安全键
 BTN_MODE = 2    # 模式切换
-BTN_PREV_J = 4  # 上一个关节 (LB)
-BTN_NEXT_J = 5  # 下一个关节 (RB)
+BTN_PREV_J = 4  # 上一个选项 (LB)
+BTN_NEXT_J = 5  # 下一个选项 (RB)
+
+CART_MODES = ["X轴独动", "Y轴独动", "Z轴独动", "XYZ联动"]
 
 class JakaManualTeleop(Node):
     def __init__(self):
@@ -26,14 +26,15 @@ class JakaManualTeleop(Node):
 
         self.mode = "CARTESIAN"
         self.active_joint_index = 0
+        self.active_cart_index = 3 # 默认进入 XYZ 联动模式
         
         self.last_btns = {} 
         
         # 滑动平均窗口，消除抖动
         self.axes_history = collections.deque(maxlen=10)
         
-        self.get_logger().info("✅ 单关节/笛卡尔混合控制已启动")
-        self.get_logger().info("🕹️  操作: [LB/RB]切换关节 | [Btn2]切换模式 | [Y轴]驱动")
+        self.get_logger().info("✅ 纯位置/单关节 混合控制已启动")
+        self.get_logger().info("🕹️  操作: [Btn2]切换 笛卡尔/关节 | [LB/RB]切换控制轴 | [Y轴]驱动")
 
     def joy_cb(self, msg):
         # 如果没有按下安全键，清空历史缓存并退出
@@ -61,14 +62,18 @@ class JakaManualTeleop(Node):
 
         if self.mode == "CARTESIAN":
             twist = Twist()
-            if not msg.buttons[BTN_TRIGGER]:
+            # 舍弃姿态控制
+            if self.active_cart_index == 0:   # X轴独动 
+                twist.linear.x = val_y * MAX_LIN_VEL * ratio
+            elif self.active_cart_index == 1: # Y轴独动
                 twist.linear.y = val_y * MAX_LIN_VEL * ratio
+            elif self.active_cart_index == 2: # Z轴独动
+                twist.linear.z = val_y * MAX_LIN_VEL * ratio
+            elif self.active_cart_index == 3: # XYZ联动
                 twist.linear.x = -val_x * MAX_LIN_VEL * ratio
+                twist.linear.y = val_y * MAX_LIN_VEL * ratio
                 twist.linear.z = val_twist * MAX_LIN_VEL * ratio
-            else:
-                twist.angular.y = val_y * MAX_ANG_VEL * ratio
-                twist.angular.z = -val_x * MAX_ANG_VEL * ratio
-                twist.angular.x = val_twist * MAX_ANG_VEL * ratio
+                
             self.cart_pub.publish(twist)
 
         elif self.mode == "JOINT_SINGLE":
@@ -83,20 +88,27 @@ class JakaManualTeleop(Node):
         def is_pressed(idx):
             return msg.buttons[idx] == 1 and self.last_btns.get(idx, 0) == 0
 
-        # 切换模式
+        # 切换主模式
         if is_pressed(BTN_MODE):
             self.mode = "JOINT_SINGLE" if self.mode == "CARTESIAN" else "CARTESIAN"
-            self.get_logger().info(f"🔄 切换模式: {self.mode}")
+            self.get_logger().info(f"🔄 切换主模式: {self.mode}")
 
-        # 切换关节 
-        if self.mode == "JOINT_SINGLE":
-            if is_pressed(BTN_NEXT_J):
+        # 切换控制子项 (LB/RB)
+        if is_pressed(BTN_NEXT_J):
+            if self.mode == "JOINT_SINGLE":
                 self.active_joint_index = (self.active_joint_index + 1) % 6
                 self.get_logger().info(f"🦾 选中关节: J{self.active_joint_index + 1}")
-            
-            if is_pressed(BTN_PREV_J):
+            elif self.mode == "CARTESIAN":
+                self.active_cart_index = (self.active_cart_index + 1) % 4
+                self.get_logger().info(f"🎯 选中空间轴: {CART_MODES[self.active_cart_index]}")
+                
+        if is_pressed(BTN_PREV_J):
+            if self.mode == "JOINT_SINGLE":
                 self.active_joint_index = (self.active_joint_index - 1) % 6
                 self.get_logger().info(f"🦾 选中关节: J{self.active_joint_index + 1}")
+            elif self.mode == "CARTESIAN":
+                self.active_cart_index = (self.active_cart_index - 1) % 4
+                self.get_logger().info(f"🎯 选中空间轴: {CART_MODES[self.active_cart_index]}")
 
         # 更新按键状态
         for i in [BTN_MODE, BTN_PREV_J, BTN_NEXT_J]:

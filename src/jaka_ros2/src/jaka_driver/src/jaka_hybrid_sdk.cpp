@@ -147,15 +147,13 @@ private:
                 current_rpy_[1] = tcp_pose.rpy.ry;
                 current_rpy_[2] = tcp_pose.rpy.rz;
             }
-
-            tf2::Vector3 vec_local(local_twist.linear.x * dt_, 
-                                   local_twist.linear.y * dt_, 
-                                   local_twist.linear.z * dt_);
-
+            
             tf2::Quaternion q_current;
             q_current.setRPY(current_rpy_[0], current_rpy_[1], current_rpy_[2]);
-            tf2::Matrix3x3 mat_rot(q_current);
-            tf2::Vector3 vec_global = mat_rot * vec_local;
+
+            tf2::Vector3 vec_global(local_twist.linear.x * dt_, 
+                                   local_twist.linear.y * dt_, 
+                                   local_twist.linear.z * dt_);
             
             double dx_mm = std::clamp(vec_global.x() * 1000.0, -3.0, 3.0);
             double dy_mm = std::clamp(vec_global.y() * 1000.0, -3.0, 3.0);

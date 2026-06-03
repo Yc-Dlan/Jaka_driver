@@ -102,6 +102,10 @@ RUN mkdir -p ~/packages && cd ~/packages && \
 RUN apt-get update \
     && apt-get install -y ros-humble-octomap-server ros-humble-octomap-rviz-plugins
 
+# 安装相机标定工具
+RUN apt-get update \
+    && apt-get install -y ros-humble-aruco-ros
+
 # 清理apt缓存以减少镜像大小
 RUN apt-get clean \
     && rm -rf /var/lib/apt/lists/*
