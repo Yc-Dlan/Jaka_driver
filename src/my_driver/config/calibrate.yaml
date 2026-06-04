@@ -1,0 +1,17 @@
+# JAKA Zu20 Eye-in-Hand Calibration Result
+handeye_parameters:
+  # 变换关系定义
+  parent_frame: "Link_06"
+  child_frame: "camera_link"
+  
+  # 平移（单位：米）
+  translation:
+    x: 0.0   # 填入 Compute 后的 X
+    y: 0.0   # 填入 Compute 后的 Y
+    z: 0.0   # 填入 Compute 后的 Z
+
+  # 旋转（欧拉角，单位：弧度）
+  rotation:
+    roll: 0.0  # 填入 Compute 后的 Roll
+    pitch: 0.0 # 填入 Compute 后的 Pitch
+    yaw: 0.0  # 填入 Compute 后的 Yaw
