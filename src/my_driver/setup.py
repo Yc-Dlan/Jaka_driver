@@ -30,8 +30,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'octomap_test = my_driver.octomap_test:main'
-            'visual_interface_gui = my_driver.visual_interface_gui:main'
+            'octomap_test = my_driver.octomap_test:main',
+            'visual_interface_gui = my_driver.visual_interface_gui:main',
+            'capsule_viz_node = my_driver.capsule_viz_node:main',
         ],
     },
 )

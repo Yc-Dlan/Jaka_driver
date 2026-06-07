@@ -1,17 +1,16 @@
 # JAKA Zu20 Eye-in-Hand Calibration Result
+# Method: ANDREFF | Precision: 0.42mm
 handeye_parameters:
   # 变换关系定义
   parent_frame: "Link_06"
-  child_frame: "camera_link"
+  child_frame: "camera_link" 
   
-  # 平移（单位：米）
   translation:
-    x: 0.0   # 填入 Compute 后的 X
-    y: 0.0   # 填入 Compute 后的 Y
-    z: 0.0   # 填入 Compute 后的 Z
-
-  # 旋转（欧拉角，单位：弧度）
+    x: -0.03667   # -36.67 mm
+    y: -0.12067   # -120.67 mm
+    z: 0.00590    # 5.90 mm
+    
   rotation:
-    roll: 0.0  # 填入 Compute 后的 Roll
-    pitch: 0.0 # 填入 Compute 后的 Pitch
-    yaw: 0.0  # 填入 Compute 后的 Yaw
+    roll: 0.01585  
+    pitch: -0.01271 
+    yaw: -0.02323   
