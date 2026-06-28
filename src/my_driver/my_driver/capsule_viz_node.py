@@ -46,7 +46,7 @@ class RobotCapsuleVisualizer(Node):
 
         self.marker_pub = self.create_publisher(MarkerArray, '/robot_capsule_markers', 10)
         self.timer = self.create_timer(0.05, self.publish_capsules)
-        self.get_logger().info("JAKA Zu20 修复版可视化节点已启动")
+        self.get_logger().info("可视化节点已启动")
 
     def create_capsule_marker(self, id, frame_id, start, end, radius, name):
         markers = []

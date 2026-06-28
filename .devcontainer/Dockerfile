@@ -110,6 +110,10 @@ RUN apt-get update \
 RUN apt-get update \
     && apt-get install -y ros-humble-foxglove-bridge
 
+# 更换通信架构
+RUN apt-get update \
+    && apt-get install -y ros-humble-rmw-zenoh-cpp
+
 # 清理apt缓存以减少镜像大小
 RUN apt-get clean \
     && rm -rf /var/lib/apt/lists/*

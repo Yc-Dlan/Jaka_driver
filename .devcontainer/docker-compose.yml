@@ -4,6 +4,7 @@ services:
     build:
        context: ..
        dockerfile: .devcontainer/Dockerfile
+       network: host
     image: yc-dlan/jaka_driver:ros2 
     container_name: jaka_driver_container
     environment:
@@ -12,6 +13,8 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all
       - OMP_WAIT_POLICY=passive
       - TERM=xterm-256color
+      - ROS_LOCALHOST_ONLY=1
+      - RMW_IMPLEMENTATION=rmw_zenoh_cpp
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       - ./..:/home/yc-dlan/jaka_ws
@@ -26,3 +29,15 @@ services:
     user: "yc-dlan" 
     # runtime: "nvidia"
     working_dir: "/home/yc-dlan/jaka_ws" # 指定默认工作目录
+    entrypoint: 
+      - /bin/bash
+      - -i
+      - -c
+      - |
+        if pgrep -x 'rmw_zenohd' >/dev/null; then
+          echo '[zenoh] rmw_zenohd already running'
+          exec sleep infinity
+        else
+          echo '[zenoh] starting rmw_zenohd...'
+          exec ros2 run rmw_zenoh_cpp rmw_zenohd
+        fi
