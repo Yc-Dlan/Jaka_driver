@@ -84,6 +84,11 @@ install(DIRECTORY include/
     DESTINATION include
 )
 
+# 安装 Python 脚本
+install(PROGRAMS scripts/static_pose_publisher.py
+    DESTINATION lib/${PROJECT_NAME}
+)
+
 # 将 launch 文件夹和 rviz 配置安装到 share 目录下
 install(DIRECTORY launch/
     DESTINATION share/${PROJECT_NAME}/launch

@@ -4,9 +4,9 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 
 def generate_launch_description():
+
     fiesta_share_dir = get_package_share_directory('fiesta')
     rviz_config_file = os.path.join(fiesta_share_dir, 'demo.rviz')
-
     # Fiesta 核心节点
     fiesta_node = Node(
         package='fiesta',
@@ -61,21 +61,30 @@ def generate_launch_description():
             'vis_upper_bound': 10.0,
         }],
         remappings=[
-            ('depth', '/camera/depth_registered/points'),
-            ('transform', '/kinect/vrpn_client/estimated_transform')
+            ('depth', '/camera/depth/image_rect_raw'),
+            ('transform', '/vins_estimator/camera_pose')
         ]
     )
 
-    # RViz2 可视化节点
+    # 静态相机位姿发布器
+    static_pose_node = Node(
+        package='fiesta',
+        executable='static_pose_publisher.py',
+        name='static_pose_publisher',
+        output='screen'
+    )
+
+    # RViz2 可视化节点（空配置启动，手动添加显示项）
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
         name='rvizvisualisation',
-        output='log',
-        arguments=['-d', rviz_config_file]
+        arguments=['-d', rviz_config_file],
+        output='log'
     )
 
     return LaunchDescription([
+        static_pose_node,
         fiesta_node,
         rviz_node
     ])

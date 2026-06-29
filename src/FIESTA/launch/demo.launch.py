@@ -27,11 +27,11 @@ def generate_launch_description():
             'max_ray_length': 5.0,
             'ray_cast_num_thread': 0,
             
-            # Camera intrinsics
-            'center_x': 322.47735741936430,
-            'center_y': 237.07634648111778,
-            'focal_x': 384.45808939187248,
-            'focal_y': 383.98275569654390,
+            # Camera intrinsics (depth camera)
+            'center_x': 428.411,
+            'center_y': 237.285,
+            'focal_x': 428.938,
+            'focal_y': 428.938,
             
             # Probabilistic grid map
             'p_hit': 0.70,
