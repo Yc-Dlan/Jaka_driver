@@ -1,73 +1,109 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.8)
 project(fiesta)
 
-find_package(catkin REQUIRED COMPONENTS
-        roscpp
-        std_msgs
-        nav_msgs
-        visualization_msgs
-        tf
-        cv_bridge
-        )
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -pthread")
+set(CMAKE_BUILD_TYPE "RELEASE")
 
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)     # ROS 2 中 tf 被替换为 tf2_ros
+find_package(cv_bridge REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(pcl_conversions REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(PCL 1.7 REQUIRED)
+find_package(PCL REQUIRED)         # 去掉 1.7 版本硬编码，使用系统默认高版本
 find_package(OpenCV REQUIRED)
-set(Eigen3_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIR})
 
-catkin_package(
-  INCLUDE_DIRS include
-)
-
-
-include_directories(${PROJECT_SOURCE_DIR}/include)
 
 include_directories(
     include
-    SYSTEM
-    ${catkin_INCLUDE_DIRS}
-    ${Eigen3_INCLUDE_DIRS}
+    ${EIGEN3_INCLUDE_DIRS}
     ${PCL_INCLUDE_DIRS}
     ${OpenCV_INCLUDE_DIRS}
 )
-
 link_directories(${PCL_LIBRARY_DIRS})
 
-set(CMAKE_CXX_FLAGS "-std=c++17 ${CMAKE_CXX_FLAGS} -O3 -Wall -pthread") # -Wextra -Werror
-set(CMAKE_BUILD_TYPE "RELEASE")
-#add_executable(test_esdf_map
-#        include/ESDFMap.h
-#        src/ESDFMap.cpp
-#        include/timing.h
-#        src/timing.cc
-#        test/test_ESDF_Map.cpp
-#        )
-#target_link_libraries(test_esdf_map
-#        ${catkin_LIBRARIES}
-#        )
-#FIND_PACKAGE( OpenMP REQUIRED)
-#if(OPENMP_FOUND)
-#message("OPENMP FOUND")
-#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-#set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
-#endif()
+
+add_library(fiesta_lib
+    src/parameters.cpp
+    src/timing.cc
+    src/raycast.cpp
+    src/ESDFMap.cpp
+)
+ament_target_dependencies(fiesta_lib
+    rclcpp
+    sensor_msgs
+    std_msgs
+    nav_msgs
+    visualization_msgs
+    tf2_ros
+    cv_bridge
+    pcl_conversions
+)
+target_link_libraries(fiesta_lib
+    ${PCL_LIBRARIES}
+    ${OpenCV_LIBS}
+)
+
 
 add_executable(test_fiesta
-        include/parameters.h
-        src/parameters.cpp
-        include/timing.h
-        src/timing.cc
-        include/raycast.h
-        src/raycast.cpp
-        include/ESDFMap.h
-        src/ESDFMap.cpp
-        include/Fiesta.h
-        test/test_fiesta.cpp
-        )
+    test/test_fiesta.cpp
+)
+# 链接刚才生成的库
 target_link_libraries(test_fiesta
-        ${catkin_LIBRARIES}
-        ${PCL_LIBRARIES}
-        ${OpenCV_LIBS}
-        )
+    fiesta_lib
+)
+ament_target_dependencies(test_fiesta
+    rclcpp
+    sensor_msgs
+    std_msgs
+    nav_msgs
+    visualization_msgs
+    tf2_ros
+    cv_bridge
+    pcl_conversions
+)
 
+
+install(TARGETS
+    fiesta_lib
+    test_fiesta
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY include/
+    DESTINATION include
+)
+
+# 将 launch 文件夹和 rviz 配置安装到 share 目录下
+install(DIRECTORY launch/
+    DESTINATION share/${PROJECT_NAME}/launch
+)
+
+install(FILES demo.rviz
+    DESTINATION share/${PROJECT_NAME}
+)
+
+
+ament_export_include_directories(include)
+ament_export_libraries(fiesta_lib)
+ament_export_dependencies(
+    rclcpp 
+    sensor_msgs
+    std_msgs 
+    nav_msgs 
+    visualization_msgs 
+    tf2_ros 
+    cv_bridge
+)
+
+ament_package()
