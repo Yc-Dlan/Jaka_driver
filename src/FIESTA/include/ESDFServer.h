@@ -28,14 +28,16 @@ public:
 
     // ========== 建图接口 ==========
 
-    /// 插入世界坐标系点云（不做 raycasting，直接标记为占据）
+    /// 插入世界坐标系融合点云（直接标记占据，不做 raycasting）
+    /// 适用于相机+雷达融合后的点云场景
     void insertPointCloud(const pcl::PointCloud<pcl::PointXYZ> &cloud);
 
-    /// 插入点云并做 raycasting（从相机原点向每个点发射射线）
-    /// @param cloud     相机坐标系下的点云
-    /// @param origin    相机在世界坐标系中的位置
-    void insertPointCloud(const pcl::PointCloud<pcl::PointXYZ> &cloud,
-                          const Eigen::Vector3d &origin);
+    /// 插入相机坐标系点云并用 raycasting 推测 free space
+    /// 适用于纯深度图转点云场景
+    /// @param cloud  相机坐标系下的点云
+    /// @param origin 相机在世界坐标系中的位置
+    void insertPointCloudWithRaycasting(const pcl::PointCloud<pcl::PointXYZ> &cloud,
+                                        const Eigen::Vector3d &origin);
 
     /// 触发 ESDF 增量更新（通常在插入几帧后调用一次）
     void update();
@@ -121,14 +123,9 @@ inline ESDFServer::~ESDFServer() {
     delete map_;
 }
 
-// ---- 非 raycasting 模式：直接标记占据 ----
+// ---- 世界坐标系融合点云：直接标记占据 ----
 inline void ESDFServer::insertPointCloud(
         const pcl::PointCloud<pcl::PointXYZ> &cloud) {
-#ifdef PROBABILISTIC
-    // 概率模式仍需 raycasting，走重载版本
-    insertPointCloud(cloud, Eigen::Vector3d::Zero());
-    return;
-#else
     map_->SetUpdateRange(cur_center_ - params_.radius_,
                          cur_center_ + params_.radius_, false);
     map_->SetAway();
@@ -140,15 +137,14 @@ inline void ESDFServer::insertPointCloud(
         map_->SetOccupancy(tmp_pos, 1);
     }
     map_->SetBack();
-#endif
 }
 
-// ---- raycasting 模式 ----
-inline void ESDFServer::insertPointCloud(
+// ---- raycasting 模式：深度图转点云 ----
+inline void ESDFServer::insertPointCloudWithRaycasting(
         const pcl::PointCloud<pcl::PointXYZ> &cloud,
         const Eigen::Vector3d &origin) {
 #ifndef PROBABILISTIC
-    // 非概率模式忽略 origin，直接调简单版本
+    // 非概率模式直接标记
     insertPointCloud(cloud);
 #else
     raycastMultiThread(cloud, origin);
