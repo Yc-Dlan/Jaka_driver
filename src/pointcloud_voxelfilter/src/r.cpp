@@ -8,6 +8,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/filters/passthrough.h>
 
 // TF2
 #include "tf2_ros/transform_listener.h"
@@ -22,7 +24,12 @@ public:
         // 1. 参数声明（把输入话题也抽成参数，方便适配真实的 RealSense 命名空间）
         this->declare_parameter("target_frame", "base_link");
         this->declare_parameter("voxel_size", 0.04);
-        this->declare_parameter("input_topic", "/camera/depth/color/points"); 
+        this->declare_parameter("input_topic", "/camera/depth/color/points");
+        this->declare_parameter("cutoff_z_near", 0.3);
+        this->declare_parameter("cutoff_z_far", 5.0);
+        this->declare_parameter("enable_SOR", true);
+        this->declare_parameter("SOR_mean_k", 30);
+        this->declare_parameter("SOR_stddev", 1.0);
 
         std::string input_topic = this->get_parameter("input_topic").as_string();
 
@@ -38,7 +45,7 @@ public:
         publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/filtered_points_baselink", 10);
 
-        RCLCPP_INFO(this->get_logger(), "真实硬件场景点云处理节点已启动。运行于系统硬时钟。");
+        RCLCPP_INFO(this->get_logger(), "真机点云预处理节点: TF->Passthrough->SOR->VoxelGrid");
     }
 
 private:
@@ -61,34 +68,51 @@ private:
             tf2::doTransform(*msg, cloud_transformed, transform_stamped);
         }
         catch (const tf2::TransformException & ex) {
-            // 真实场景中，刚开机或网络抖动时丢几帧 TF 很常见，使用限速警告防止刷屏
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
-                                 "硬件时钟未完全对齐，等待变换: %s", ex.what());
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                 "TF error: %s", ex.what());
             return;
         }
 
-        // --- 体素滤波 ---
-        pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::fromROSMsg(cloud_transformed, *pcl_cloud);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::fromROSMsg(cloud_transformed, *cloud);
+        if (cloud->empty()) return;
 
-        if (pcl_cloud->empty()) return;
+        // 2. Passthrough Z
+        double near = this->get_parameter("cutoff_z_near").as_double();
+        double far  = this->get_parameter("cutoff_z_far").as_double();
+        pcl::PassThrough<pcl::PointXYZ> pass_z;
+        pass_z.setInputCloud(cloud);
+        pass_z.setFilterFieldName("z");
+        pass_z.setFilterLimits(near, far);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_z(new pcl::PointCloud<pcl::PointXYZ>);
+        pass_z.filter(*cloud_z);
 
+        // 3. SOR
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_clean(new pcl::PointCloud<pcl::PointXYZ>);
+        if (this->get_parameter("enable_SOR").as_bool() && !cloud_z->empty()) {
+            pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+            sor.setInputCloud(cloud_z);
+            sor.setMeanK(this->get_parameter("SOR_mean_k").as_int());
+            sor.setStddevMulThresh(this->get_parameter("SOR_stddev").as_double());
+            sor.filter(*cloud_clean);
+        } else {
+            *cloud_clean = *cloud_z;
+        }
+        if (cloud_clean->empty()) return;
+
+        // 4. VoxelGrid
         pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::VoxelGrid<pcl::PointXYZ> sor;
-        sor.setInputCloud(pcl_cloud);
+        pcl::VoxelGrid<pcl::PointXYZ> vg;
+        vg.setInputCloud(cloud_clean);
         double leaf = this->get_parameter("voxel_size").as_double();
-        sor.setLeafSize(leaf, leaf, leaf);
-        sor.filter(*cloud_filtered);
+        vg.setLeafSize(leaf, leaf, leaf);
+        vg.filter(*cloud_filtered);
 
-        // --- 发布结果 ---
+        // 5. publish
         sensor_msgs::msg::PointCloud2 output_msg;
         pcl::toROSMsg(*cloud_filtered, output_msg);
         output_msg.header.frame_id = target_frame;
-        
-        // --- 核心修改 2：保留原始时间戳 ---
-        // 后续避障控制器（如 APF 或 MPC）需要知道这个点云是哪一个历史时刻的数据
-        output_msg.header.stamp = msg->header.stamp; 
-        
+        output_msg.header.stamp = msg->header.stamp;
         publisher_->publish(output_msg);
     }
 
